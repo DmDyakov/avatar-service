@@ -3,7 +3,7 @@ package app
 
 import (
 	"avatar-service/internal/config"
-	"avatar-service/internal/infrastructure/postgres"
+	postgres "avatar-service/internal/repository/postgres"
 
 	healthservice "avatar-service/internal/services/health"
 	httpserver "avatar-service/internal/transport/http"
