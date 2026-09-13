@@ -1,0 +1,24 @@
+# Binaries
+bin/
+dist/
+
+# Environment
+.env
+.env.local
+
+# IDE
+.vscode/
+.idea/
+
+# Go
+vendor/
+coverage.out
+*.test
+*.out
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker
+docker-compose.override.yml
