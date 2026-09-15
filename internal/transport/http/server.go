@@ -3,7 +3,6 @@ package http
 
 import (
 	"avatar-service/internal/config"
-	"avatar-service/internal/transport/http/handlers"
 	"context"
 	"errors"
 	"net/http"
@@ -20,11 +19,24 @@ type Server struct {
 	shutdownTimeout time.Duration
 }
 
+type HealthHandler interface {
+	HealthDB(w http.ResponseWriter, r *http.Request)
+}
+
+type AvatarHandler interface {
+	Upload(w http.ResponseWriter, r *http.Request)
+	Get(w http.ResponseWriter, r *http.Request)
+	GetUserAvatar(w http.ResponseWriter, r *http.Request)
+	GetMetadata(w http.ResponseWriter, r *http.Request)
+	ListByUserID(w http.ResponseWriter, r *http.Request)
+	Delete(w http.ResponseWriter, r *http.Request)
+}
+
 // New создаёт HTTP-сервер с настроенными маршрутами и middleware.
 func New(
 	cfg *config.HTTPServerConfig,
-	healthHandler *handlers.HealthHandler,
-	avatarHandler *handlers.AvatarHandler,
+	healthHandler HealthHandler,
+	avatarHandler AvatarHandler,
 	logger *zap.Logger,
 ) *Server {
 	r := chi.NewRouter()

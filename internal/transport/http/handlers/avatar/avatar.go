@@ -1,5 +1,5 @@
-// Package handlers содержит HTTP-обработчики запросов.
-package handlers
+// Package avatar содержит HTTP-обработчики запросов для работы с аватарками.
+package avatar
 
 import (
 	"context"
@@ -9,11 +9,13 @@ import (
 	"net/http"
 
 	"avatar-service/internal/domain"
+	"avatar-service/internal/transport/http/handlers"
 
 	"github.com/go-chi/chi/v5"
 	"go.uber.org/zap"
 )
 
+//go:generate mockgen -source=avatar.go -destination=mocks/mock_avatar_service.go -package=mocks
 type AvatarService interface {
 	Upload(ctx context.Context, userID string, file multipart.File, header *multipart.FileHeader) (*domain.Avatar, error)
 	GetByID(ctx context.Context, id string) (*domain.Avatar, io.ReadCloser, error)
@@ -41,18 +43,18 @@ func NewAvatarHandler(service AvatarService, logger *zap.Logger) *AvatarHandler 
 func (h *AvatarHandler) Upload(w http.ResponseWriter, r *http.Request) {
 	userID := r.Header.Get("X-User-ID")
 	if userID == "" {
-		respondError(w, http.StatusBadRequest, "X-User-ID header is required")
+		handlers.RespondError(w, http.StatusBadRequest, "X-User-ID header is required")
 		return
 	}
 
 	if err := r.ParseMultipartForm(10 << 20); err != nil {
-		respondError(w, http.StatusBadRequest, "invalid multipart form or file too large")
+		handlers.RespondError(w, http.StatusBadRequest, "invalid multipart form or file too large")
 		return
 	}
 
 	file, header, err := r.FormFile("file")
 	if err != nil {
-		respondError(w, http.StatusBadRequest, "file field is required")
+		handlers.RespondError(w, http.StatusBadRequest, "file field is required")
 		return
 	}
 	defer file.Close()
@@ -63,14 +65,14 @@ func (h *AvatarHandler) Upload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	respondJSON(w, http.StatusCreated, avatar)
+	handlers.RespondJSON(w, http.StatusCreated, avatar)
 }
 
 // Get обрабатывает GET /api/v1/avatars/{id}.
 func (h *AvatarHandler) Get(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	if id == "" {
-		respondError(w, http.StatusBadRequest, "id is required")
+		handlers.RespondError(w, http.StatusBadRequest, "id is required")
 		return
 	}
 
@@ -94,7 +96,7 @@ func (h *AvatarHandler) Get(w http.ResponseWriter, r *http.Request) {
 func (h *AvatarHandler) GetUserAvatar(w http.ResponseWriter, r *http.Request) {
 	userID := chi.URLParam(r, "user_id")
 	if userID == "" {
-		respondError(w, http.StatusBadRequest, "user_id is required")
+		handlers.RespondError(w, http.StatusBadRequest, "user_id is required")
 		return
 	}
 
@@ -118,7 +120,7 @@ func (h *AvatarHandler) GetUserAvatar(w http.ResponseWriter, r *http.Request) {
 func (h *AvatarHandler) GetMetadata(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	if id == "" {
-		respondError(w, http.StatusBadRequest, "id is required")
+		handlers.RespondError(w, http.StatusBadRequest, "id is required")
 		return
 	}
 
@@ -128,14 +130,14 @@ func (h *AvatarHandler) GetMetadata(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	respondJSON(w, http.StatusOK, avatar)
+	handlers.RespondJSON(w, http.StatusOK, avatar)
 }
 
 // ListByUserID обрабатывает GET /api/v1/users/{user_id}/avatars.
 func (h *AvatarHandler) ListByUserID(w http.ResponseWriter, r *http.Request) {
 	userID := chi.URLParam(r, "user_id")
 	if userID == "" {
-		respondError(w, http.StatusBadRequest, "user_id is required")
+		handlers.RespondError(w, http.StatusBadRequest, "user_id is required")
 		return
 	}
 
@@ -145,20 +147,20 @@ func (h *AvatarHandler) ListByUserID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	respondJSON(w, http.StatusOK, avatars)
+	handlers.RespondJSON(w, http.StatusOK, avatars)
 }
 
 // Delete обрабатывает DELETE /api/v1/avatars/{id}.
 func (h *AvatarHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	userID := r.Header.Get("X-User-ID")
 	if userID == "" {
-		respondError(w, http.StatusBadRequest, "X-User-ID header is required")
+		handlers.RespondError(w, http.StatusBadRequest, "X-User-ID header is required")
 		return
 	}
 
 	id := chi.URLParam(r, "id")
 	if id == "" {
-		respondError(w, http.StatusBadRequest, "id is required")
+		handlers.RespondError(w, http.StatusBadRequest, "id is required")
 		return
 	}
 
@@ -174,17 +176,17 @@ func (h *AvatarHandler) Delete(w http.ResponseWriter, r *http.Request) {
 func (h *AvatarHandler) handleError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, domain.ErrNotFound):
-		respondError(w, http.StatusNotFound, "avatar not found")
+		handlers.RespondError(w, http.StatusNotFound, "avatar not found")
 	case errors.Is(err, domain.ErrForbidden):
-		respondError(w, http.StatusForbidden, "forbidden")
+		handlers.RespondError(w, http.StatusForbidden, "forbidden")
 	case errors.Is(err, domain.ErrInvalidFormat):
-		respondError(w, http.StatusBadRequest, "invalid file format")
+		handlers.RespondError(w, http.StatusBadRequest, "invalid file format")
 	case errors.Is(err, domain.ErrFileTooLarge):
-		respondError(w, http.StatusRequestEntityTooLarge, "file too large")
+		handlers.RespondError(w, http.StatusRequestEntityTooLarge, "file too large")
 	case errors.Is(err, domain.ErrInvalidInput):
-		respondError(w, http.StatusBadRequest, "invalid input")
+		handlers.RespondError(w, http.StatusBadRequest, "invalid input")
 	default:
 		h.logger.Error("internal error", zap.Error(err))
-		respondError(w, http.StatusInternalServerError, "internal server error")
+		handlers.RespondError(w, http.StatusInternalServerError, "internal server error")
 	}
 }

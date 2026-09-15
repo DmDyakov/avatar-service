@@ -20,6 +20,9 @@ test-cover:
 lint:
 	golangci-lint run
 
+generate:
+	go generate ./...
+
 docker-up:
 	docker compose up -d
 

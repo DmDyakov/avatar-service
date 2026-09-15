@@ -11,8 +11,8 @@ type errorResponse struct {
 	Details string `json:"details,omitempty"`
 }
 
-// respondJSON отправляет JSON-ответ.
-func respondJSON(w http.ResponseWriter, status int, data any) {
+// RespondJSON отправляет JSON-ответ.
+func RespondJSON(w http.ResponseWriter, status int, data any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 
@@ -25,7 +25,7 @@ func respondJSON(w http.ResponseWriter, status int, data any) {
 	}
 }
 
-// respondError отправляет JSON-ответ с ошибкой.
-func respondError(w http.ResponseWriter, status int, message string) {
-	respondJSON(w, status, errorResponse{Error: message})
+// RespondError отправляет JSON-ответ с ошибкой.
+func RespondError(w http.ResponseWriter, status int, message string) {
+	RespondJSON(w, status, errorResponse{Error: message})
 }

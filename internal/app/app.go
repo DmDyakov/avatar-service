@@ -10,8 +10,12 @@ import (
 
 	avatarservice "avatar-service/internal/services/avatar"
 	healthservice "avatar-service/internal/services/health"
+
 	httpserver "avatar-service/internal/transport/http"
-	"avatar-service/internal/transport/http/handlers"
+
+	avatarhandler "avatar-service/internal/transport/http/handlers/avatar"
+	healthhandler "avatar-service/internal/transport/http/handlers/health"
+
 	"context"
 	"fmt"
 
@@ -39,11 +43,11 @@ func New(cfg *config.Config, logger *zap.Logger) (*App, error) {
 	pub := publisher.NewPublisher()
 
 	healthService := healthservice.New(pg)
-	healthHandler := handlers.NewHealthHandler(healthService, logger)
+	healthHandler := healthhandler.NewHealthHandler(healthService, logger)
 
 	avatarRepo := repository.NewAvatarRepository()
 	avatarService := avatarservice.New(avatarRepo, storage, pub, logger)
-	avatarHandler := handlers.NewAvatarHandler(avatarService, logger)
+	avatarHandler := avatarhandler.NewAvatarHandler(avatarService, logger)
 
 	httpServer := httpserver.New(
 		&cfg.HTTPServer,
