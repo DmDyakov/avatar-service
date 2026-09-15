@@ -3,8 +3,12 @@ package app
 
 import (
 	"avatar-service/internal/config"
+	"avatar-service/internal/publisher"
+	"avatar-service/internal/repository"
 	postgres "avatar-service/internal/repository/postgres"
+	"avatar-service/internal/storage"
 
+	avatarservice "avatar-service/internal/services/avatar"
 	healthservice "avatar-service/internal/services/health"
 	httpserver "avatar-service/internal/transport/http"
 	"avatar-service/internal/transport/http/handlers"
@@ -31,12 +35,20 @@ func New(cfg *config.Config, logger *zap.Logger) (*App, error) {
 		return nil, fmt.Errorf("failed to initialize postgres: %w", err)
 	}
 
+	storage := storage.NewStorage()
+	pub := publisher.NewPublisher()
+
 	healthService := healthservice.New(pg)
 	healthHandler := handlers.NewHealthHandler(healthService, logger)
+
+	avatarRepo := repository.NewAvatarRepository()
+	avatarService := avatarservice.New(avatarRepo, storage, pub, logger)
+	avatarHandler := handlers.NewAvatarHandler(avatarService, logger)
 
 	httpServer := httpserver.New(
 		&cfg.HTTPServer,
 		healthHandler,
+		avatarHandler,
 		logger,
 	)
 

@@ -25,3 +25,19 @@ type Avatar struct {
 	UpdatedAt    time.Time    `json:"updated_at"`
 	DeletedAt    *time.Time   `json:"deleted_at,omitempty"`
 }
+
+// AvatarUploadedEvent — аватар успешно загружен.
+type AvatarUploadedEvent struct {
+	AvatarID   string    `json:"avatar_id"`
+	UserID     string    `json:"user_id"`
+	S3Key      string    `json:"s3_key"`
+	OccurredAt time.Time `json:"occurred_at"`
+}
+
+// AvatarDeletedEvent — аватар мягко удалён.
+type AvatarDeletedEvent struct {
+	AvatarID   string    `json:"avatar_id"`
+	UserID     string    `json:"user_id"`
+	S3Keys     []string  `json:"s3_keys"`
+	OccurredAt time.Time `json:"occurred_at"`
+}

@@ -24,12 +24,24 @@ type Server struct {
 func New(
 	cfg *config.HTTPServerConfig,
 	healthHandler *handlers.HealthHandler,
+	avatarHandler *handlers.AvatarHandler,
 	logger *zap.Logger,
 ) *Server {
 	r := chi.NewRouter()
 	r.Use(chimw.StripSlashes)
 
+	// Health
 	r.Get("/ping", healthHandler.HealthDB)
+
+	// Avatar API
+	r.Route("/api/v1", func(r chi.Router) {
+		r.Post("/avatars", avatarHandler.Upload)
+		r.Get("/avatars/{id}", avatarHandler.Get)
+		r.Get("/avatars/{id}/metadata", avatarHandler.GetMetadata)
+		r.Delete("/avatars/{id}", avatarHandler.Delete)
+		r.Get("/users/{user_id}/avatar", avatarHandler.GetUserAvatar)
+		r.Get("/users/{user_id}/avatars", avatarHandler.ListByUserID)
+	})
 
 	srv := &http.Server{
 		Addr:         cfg.Address,
