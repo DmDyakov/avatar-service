@@ -4,17 +4,17 @@ package app
 import (
 	"avatar-service/internal/config"
 	"avatar-service/internal/publisher"
-	"avatar-service/internal/repository"
-	postgres "avatar-service/internal/repository/postgres"
+
+	"avatar-service/internal/repository/postgres"
 	"avatar-service/internal/storage"
-
-	avatarservice "avatar-service/internal/services/avatar"
-	healthservice "avatar-service/internal/services/health"
-
 	httpserver "avatar-service/internal/transport/http"
 
-	avatarhandler "avatar-service/internal/transport/http/handlers/avatar"
+	healthservice "avatar-service/internal/services/health"
 	healthhandler "avatar-service/internal/transport/http/handlers/health"
+
+	avatarrepo "avatar-service/internal/repository/postgres/avatar"
+	avatarservice "avatar-service/internal/services/avatar"
+	avatarhandler "avatar-service/internal/transport/http/handlers/avatar"
 
 	"context"
 	"fmt"
@@ -28,13 +28,13 @@ import (
 type App struct {
 	cfg    *config.Config
 	logger *zap.Logger
-	pg     *pgxpool.Pool
+	pgPool *pgxpool.Pool
 	http   *httpserver.Server
 }
 
 // New создаёт новый App.
 func New(cfg *config.Config, logger *zap.Logger) (*App, error) {
-	pg, err := postgres.NewPool(cfg.Postgres, logger)
+	pgPool, err := postgres.NewPool(cfg.Postgres, logger)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize postgres: %w", err)
 	}
@@ -42,10 +42,10 @@ func New(cfg *config.Config, logger *zap.Logger) (*App, error) {
 	storage := storage.NewStorage()
 	pub := publisher.NewPublisher()
 
-	healthService := healthservice.New(pg)
+	healthService := healthservice.New(pgPool)
 	healthHandler := healthhandler.NewHealthHandler(healthService, logger)
 
-	avatarRepo := repository.NewAvatarRepository()
+	avatarRepo := avatarrepo.NewAvatarRepository(pgPool)
 	avatarService := avatarservice.New(avatarRepo, storage, pub, logger)
 	avatarHandler := avatarhandler.NewAvatarHandler(avatarService, logger)
 
@@ -59,14 +59,14 @@ func New(cfg *config.Config, logger *zap.Logger) (*App, error) {
 	return &App{
 		cfg:    cfg,
 		logger: logger,
-		pg:     pg,
+		pgPool: pgPool,
 		http:   httpServer,
 	}, nil
 }
 
 // Run запускает сервер.
 func (a *App) Run(ctx context.Context) error {
-	defer a.pg.Close()
+	defer a.pgPool.Close()
 
 	g, ctx := errgroup.WithContext(ctx)
 
