@@ -5,12 +5,15 @@ import (
 	"context"
 	"net/http"
 
+	"avatar-service/internal/services/health"
+	"avatar-service/internal/transport/http/handlers"
+
 	"go.uber.org/zap"
 )
 
-//go:generate mockgen -destination=mocks/mock_health_service.go -package=mocks . HealthService
+//go:generate mockgen -destination=mocks/mock_health_service.go -package=mocks avatar-service/internal/transport/http/handlers HealthService
 type HealthService interface {
-	Ping(ctx context.Context) error
+	Check(ctx context.Context) (*health.Status, int)
 }
 
 type HealthHandler struct {
@@ -19,22 +22,28 @@ type HealthHandler struct {
 }
 
 func NewHealthHandler(service HealthService, logger *zap.Logger) *HealthHandler {
-
 	return &HealthHandler{
 		service: service,
 		logger:  logger,
 	}
 }
 
-// HealthDB обрабатывает запрос проверки подключения к БД.
-func (h *HealthHandler) HealthDB(w http.ResponseWriter, r *http.Request) {
-	err := h.service.Ping(r.Context())
-	if err != nil {
-		h.logger.Error("Database ping failed", zap.Error(err))
-		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
-		return
+// Live — liveness probe. Проверяет, что процесс жив.
+func (h *HealthHandler) Live(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte("ok"))
+}
+
+// Ready — readiness probe. Проверяет зависимости.
+func (h *HealthHandler) Ready(w http.ResponseWriter, r *http.Request) {
+	status, code := h.service.Check(r.Context())
+
+	if code != http.StatusOK {
+		h.logger.Warn("readiness degraded",
+			zap.String("status", status.Status),
+			zap.Any("components", status.Components),
+		)
 	}
 
-	w.WriteHeader(http.StatusOK)
-
+	handlers.RespondJSON(w, code, status)
 }

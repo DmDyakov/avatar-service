@@ -1,23 +1,58 @@
 // Package health реализует сервис проверки состояния приложения.
 package health
 
-import (
-	"context"
+import "context"
 
-	"github.com/jackc/pgx/v5/pgxpool"
-)
+// Pinger — компонент, который можно проверить.
+type Pinger interface {
+	Ping(ctx context.Context) error
+}
 
-// Service проверяет доступность зависимостей приложения.
+// Service агрегирует проверки компонентов.
 type Service struct {
-	pg *pgxpool.Pool
+	components map[string]Pinger
 }
 
-// New создаёт сервис проверки здоровья.
-func New(pg *pgxpool.Pool) *Service {
-	return &Service{pg: pg}
+func New() *Service {
+	return &Service{
+		components: make(map[string]Pinger),
+	}
 }
 
-// Ping проверяет подключение к БД.
-func (s *Service) Ping(ctx context.Context) error {
-	return s.pg.Ping(ctx)
+// Register регистрирует компонент.
+func (s *Service) Register(name string, p Pinger) {
+	s.components[name] = p
+}
+
+// Status — результат проверки.
+type Status struct {
+	Status     string            `json:"status"`
+	Components map[string]string `json:"components"`
+}
+
+// Check проверяет все компоненты.
+func (s *Service) Check(ctx context.Context) (*Status, int) {
+	components := make(map[string]string, len(s.components))
+	healthy := true
+
+	for name, p := range s.components {
+		if err := p.Ping(ctx); err != nil {
+			components[name] = "error: " + err.Error()
+			healthy = false
+		} else {
+			components[name] = "ok"
+		}
+	}
+
+	status := "ok"
+	code := 200
+	if !healthy {
+		status = "degraded"
+		code = 503
+	}
+
+	return &Status{
+		Status:     status,
+		Components: components,
+	}, code
 }

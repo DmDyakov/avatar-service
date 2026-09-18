@@ -3,6 +3,7 @@ package avatar
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"mime/multipart"
@@ -71,9 +72,15 @@ func (s *Service) Upload(
 		return nil, err
 	}
 
-	s3Key := fmt.Sprintf("avatars/%s/%s", userID, uuid.New().String())
+	avatarID := uuid.New().String()
+	s3Key := fmt.Sprintf("avatars/%s/%s", userID, avatarID)
+
+	if err := s.storage.Upload(ctx, s3Key, file, header.Size, contentType); err != nil {
+		return nil, fmt.Errorf("upload to storage: %w", err)
+	}
 
 	avatar := &domain.Avatar{
+		ID:           avatarID,
 		UserID:       userID,
 		FileName:     header.Filename,
 		MimeType:     contentType,
@@ -83,13 +90,19 @@ func (s *Service) Upload(
 	}
 
 	if err := s.avatarRepo.Create(ctx, avatar); err != nil {
+		if delErr := s.storage.Delete(ctx, s3Key); delErr != nil {
+			return nil, errors.Join(
+				fmt.Errorf("create avatar: %w", err),
+				fmt.Errorf("rollback s3: %w", delErr),
+			)
+		}
 		return nil, fmt.Errorf("create avatar: %w", err)
 	}
 
 	return avatar, nil
 }
 
-// GetByID возвращает аватарку по ID.
+// GetByID возвращает аватарку и её файл по ID.
 func (s *Service) GetByID(
 	ctx context.Context,
 	id string,
@@ -99,7 +112,12 @@ func (s *Service) GetByID(
 		return nil, nil, err
 	}
 
-	return avatar, nil, nil
+	reader, err := s.storage.Download(ctx, avatar.S3Key)
+	if err != nil {
+		return nil, nil, fmt.Errorf("download from storage: %w", err)
+	}
+
+	return avatar, reader, nil
 }
 
 // GetUserAvatar возвращает текущую аватарку пользователя.
@@ -111,7 +129,13 @@ func (s *Service) GetUserAvatar(
 	if err != nil {
 		return nil, nil, err
 	}
-	return avatar, nil, nil
+
+	reader, err := s.storage.Download(ctx, avatar.S3Key)
+	if err != nil {
+		return nil, nil, fmt.Errorf("download from storage: %w", err)
+	}
+
+	return avatar, reader, nil
 }
 
 // GetMetadata возвращает метаданные аватарки.

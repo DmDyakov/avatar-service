@@ -19,7 +19,7 @@ type Config struct {
 	ShutdownTimeout time.Duration `env:"SHUTDOWN_TIMEOUT" envDefault:"10s" validate:"gt=0"`
 	HTTPServer      HTTPServerConfig
 	Postgres        PostgresConfig
-	JWT             JWTConfig
+	S3              S3Config
 }
 
 // Load — загружает конфигурацию из переменных окружения.
@@ -101,11 +101,15 @@ func (c PostgresConfig) DSNRedacted() string {
 }
 
 // --------------------------------------
-// JWTConfig — конфигурация JWT токенов
+// S3Config — конфигурация S3 хранилища
 // --------------------------------------
 
-type JWTConfig struct {
-	Secret         string        `env:"JWT_SECRET,required" validate:"min=32"`
-	AccessTokenTTL time.Duration `env:"JWT_ACCESS_TTL" envDefault:"15m" validate:"gt=0"`
-	Issuer         string        `env:"JWT_ISSUER" envDefault:"avatar-service" validate:"required"`
+type S3Config struct {
+	Endpoint       string        `env:"S3_ENDPOINT" envDefault:"localhost:9000" validate:"required"`
+	AccessKey      string        `env:"S3_ACCESS_KEY" envDefault:"minioadmin" validate:"required"`
+	SecretKey      string        `env:"S3_SECRET_KEY" envDefault:"minioadmin" validate:"required"`
+	Bucket         string        `env:"S3_BUCKET" envDefault:"avatars" validate:"required"`
+	UseSSL         bool          `env:"S3_USE_SSL" envDefault:"false"`
+	Region         string        `env:"S3_REGION" envDefault:"us-east-1"`
+	ConnectTimeout time.Duration `env:"S3_CONNECT_TIMEOUT" envDefault:"30s" validate:"gt=0"`
 }

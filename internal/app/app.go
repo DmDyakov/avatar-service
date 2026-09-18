@@ -4,9 +4,9 @@ package app
 import (
 	"avatar-service/internal/config"
 	"avatar-service/internal/publisher"
+	"avatar-service/internal/storage/minio"
 
 	"avatar-service/internal/repository/postgres"
-	"avatar-service/internal/storage"
 	httpserver "avatar-service/internal/transport/http"
 
 	healthservice "avatar-service/internal/services/health"
@@ -26,10 +26,11 @@ import (
 
 // App управляет жизненным циклом сервера.
 type App struct {
-	cfg    *config.Config
-	logger *zap.Logger
-	pgPool *pgxpool.Pool
-	http   *httpserver.Server
+	cfg        *config.Config
+	logger     *zap.Logger
+	pgPool     *pgxpool.Pool
+	httpServer *httpserver.Server
+	storage    *minio.Storage
 }
 
 // New создаёт новый App.
@@ -39,10 +40,16 @@ func New(cfg *config.Config, logger *zap.Logger) (*App, error) {
 		return nil, fmt.Errorf("failed to initialize postgres: %w", err)
 	}
 
-	storage := storage.NewStorage()
+	storage, err := minio.NewStorage(cfg.S3)
+	if err != nil {
+		return nil, fmt.Errorf("storage: %w", err)
+	}
+
 	pub := publisher.NewPublisher()
 
-	healthService := healthservice.New(pgPool)
+	healthService := healthservice.New()
+	healthService.Register("postgres", pgPool)
+	healthService.Register("storage", storage)
 	healthHandler := healthhandler.NewHealthHandler(healthService, logger)
 
 	avatarRepo := avatarrepo.NewAvatarRepository(pgPool)
@@ -57,10 +64,11 @@ func New(cfg *config.Config, logger *zap.Logger) (*App, error) {
 	)
 
 	return &App{
-		cfg:    cfg,
-		logger: logger,
-		pgPool: pgPool,
-		http:   httpServer,
+		cfg:        cfg,
+		logger:     logger,
+		pgPool:     pgPool,
+		httpServer: httpServer,
+		storage:    storage,
 	}, nil
 }
 
@@ -71,7 +79,7 @@ func (a *App) Run(ctx context.Context) error {
 	g, ctx := errgroup.WithContext(ctx)
 
 	g.Go(func() error {
-		return a.http.Run(ctx)
+		return a.httpServer.Run(ctx)
 	})
 
 	return g.Wait()

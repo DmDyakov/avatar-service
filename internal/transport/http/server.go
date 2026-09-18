@@ -20,7 +20,8 @@ type Server struct {
 }
 
 type HealthHandler interface {
-	HealthDB(w http.ResponseWriter, r *http.Request)
+	Live(w http.ResponseWriter, r *http.Request)
+	Ready(w http.ResponseWriter, r *http.Request)
 }
 
 type AvatarHandler interface {
@@ -43,7 +44,8 @@ func New(
 	r.Use(chimw.StripSlashes)
 
 	// Health
-	r.Get("/ping", healthHandler.HealthDB)
+	r.Get("/live", healthHandler.Live)
+	r.Get("/ready", healthHandler.Ready)
 
 	// Avatar API
 	r.Route("/api/v1", func(r chi.Router) {

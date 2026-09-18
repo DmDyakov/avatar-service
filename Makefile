@@ -1,4 +1,4 @@
-.PHONY: run build test lint docker-up docker-down migrate clean
+.PHONY: run worker build test test-cover lint generate docker-up docker-down docker-logs clean
 
 run:
 	go run ./cmd/server
@@ -31,12 +31,6 @@ docker-down:
 
 docker-logs:
 	docker compose logs -f
-
-migrate-up:
-	go run ./cmd/migrate -direction up
-
-migrate-down:
-	go run ./cmd/migrate -direction down
 
 clean:
 	rm -rf bin/ coverage.out
