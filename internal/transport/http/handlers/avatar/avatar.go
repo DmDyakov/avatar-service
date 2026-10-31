@@ -95,8 +95,8 @@ func (h *AvatarHandler) Get(w http.ResponseWriter, r *http.Request) {
 // GetUserAvatar обрабатывает GET /api/v1/users/{user_id}/avatar.
 func (h *AvatarHandler) GetUserAvatar(w http.ResponseWriter, r *http.Request) {
 	userID := chi.URLParam(r, "user_id")
-	if userID == "" {
-		handlers.RespondError(w, http.StatusBadRequest, "user_id is required")
+	if err := validateUserID(userID); err != nil {
+		handlers.RespondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -114,6 +114,7 @@ func (h *AvatarHandler) streamAvatar(w http.ResponseWriter, avatar *domain.Avata
 	defer reader.Close()
 
 	w.Header().Set("Content-Type", avatar.MimeType)
+	w.Header().Set("Cache-Control", "public, max-age=86400")
 	w.WriteHeader(http.StatusOK)
 
 	if _, err := io.Copy(w, reader); err != nil {
@@ -129,7 +130,10 @@ func (h *AvatarHandler) streamAvatar(w http.ResponseWriter, avatar *domain.Avata
 func (h *AvatarHandler) handleError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, domain.ErrNotFound):
-		handlers.RespondError(w, http.StatusNotFound, "avatar not found")
+		handlers.RespondError(w, http.StatusNotFound, "Avatar not found")
+	case errors.Is(err, domain.ErrStorageUnavailable):
+		h.logger.Error("storage unavailable", zap.Error(err))
+		handlers.RespondError(w, http.StatusInternalServerError, "internal server error")
 	case errors.Is(err, domain.ErrForbidden):
 		handlers.RespondErrorWithDetails(w, http.StatusForbidden,
 			"Forbidden", "You can only delete your own avatars")

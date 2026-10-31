@@ -237,7 +237,7 @@ func TestService_GetByID(t *testing.T) {
 		assert.ErrorIs(t, err, domain.ErrNotFound)
 	})
 
-	t.Run("storage error propagated", func(t *testing.T) {
+	t.Run("storage error mapped to ErrStorageUnavailable", func(t *testing.T) {
 		mockRepo, mockStorage, _, svc := setupTest(t)
 
 		mockRepo.EXPECT().
@@ -249,22 +249,25 @@ func TestService_GetByID(t *testing.T) {
 			Return(nil, errors.New("s3 down"))
 
 		_, _, err := svc.GetByID(context.Background(), "avatar-1")
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "download from storage")
+		assert.ErrorIs(t, err, domain.ErrStorageUnavailable)
+		assert.NotErrorIs(t, err, domain.ErrNotFound)
 	})
-}
 
-// jpegBytes читает реальный JPEG из testdata.
-//
-// Собранный вручную []byte{0xFF, 0xD8, 0xFF, 0xE0} + нули проходит
-// magic-bytes в validateUpload, но image.DecodeConfig на нём падает.
-// Для тестов, где срабатывает AS-107.8, нужен валидный файл.
-func jpegBytes(t *testing.T) []byte {
-	t.Helper()
+	t.Run("storage returns ErrNotFound -> still ErrStorageUnavailable", func(t *testing.T) {
+		mockRepo, mockStorage, _, svc := setupTest(t)
 
-	data, err := os.ReadFile("../../../tests/testdata/avatar.jpg")
-	require.NoError(t, err)
-	return data
+		mockRepo.EXPECT().
+			GetByID(gomock.Any(), "avatar-1").
+			Return(&domain.Avatar{ID: "avatar-1", S3Key: "key"}, nil)
+
+		mockStorage.EXPECT().
+			Download(gomock.Any(), "key").
+			Return(nil, domain.ErrNotFound)
+
+		_, _, err := svc.GetByID(context.Background(), "avatar-1")
+		assert.ErrorIs(t, err, domain.ErrStorageUnavailable)
+		assert.NotErrorIs(t, err, domain.ErrNotFound)
+	})
 }
 
 func TestService_GetUserAvatar(t *testing.T) {
@@ -303,7 +306,7 @@ func TestService_GetUserAvatar(t *testing.T) {
 		assert.ErrorIs(t, err, domain.ErrNotFound)
 	})
 
-	t.Run("storage error propagated", func(t *testing.T) {
+	t.Run("storage error mapped to ErrStorageUnavailable", func(t *testing.T) {
 		mockRepo, mockStorage, _, svc := setupTest(t)
 
 		mockRepo.EXPECT().
@@ -315,7 +318,20 @@ func TestService_GetUserAvatar(t *testing.T) {
 			Return(nil, errors.New("s3 down"))
 
 		_, _, err := svc.GetUserAvatar(context.Background(), "user-123")
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "download from storage")
+		assert.ErrorIs(t, err, domain.ErrStorageUnavailable)
+		assert.NotErrorIs(t, err, domain.ErrNotFound)
 	})
+}
+
+// jpegBytes читает реальный JPEG из testdata.
+//
+// Собранный вручную []byte{0xFF, 0xD8, 0xFF, 0xE0} + нули проходит
+// magic-bytes в validateUpload, но image.DecodeConfig на нём падает.
+// Для тестов, где срабатывает AS-107.8, нужен валидный файл.
+func jpegBytes(t *testing.T) []byte {
+	t.Helper()
+
+	data, err := os.ReadFile("../../../tests/testdata/avatar.jpg")
+	require.NoError(t, err)
+	return data
 }

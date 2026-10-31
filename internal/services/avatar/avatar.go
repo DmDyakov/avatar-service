@@ -137,6 +137,8 @@ func (s *Service) GetByID(
 }
 
 // GetUserAvatar возвращает текущую аватарку пользователя и поток её файла.
+//
+// «Текущая» = последняя по created_at DESC (делает репозиторий).
 func (s *Service) GetUserAvatar(
 	ctx context.Context,
 	userID string,
@@ -157,7 +159,12 @@ func (s *Service) fetchAvatar(
 
 	reader, err := s.storage.Download(ctx, avatar.S3Key)
 	if err != nil {
-		return nil, nil, fmt.Errorf("download from storage: %w", err)
+		s.logger.Error("failed to download avatar from storage",
+			zap.String("avatar_id", avatar.ID),
+			zap.String("s3_key", avatar.S3Key),
+			zap.Error(err),
+		)
+		return nil, nil, fmt.Errorf("%w: %v", domain.ErrStorageUnavailable, err)
 	}
 
 	return avatar, reader, nil
