@@ -266,3 +266,56 @@ func jpegBytes(t *testing.T) []byte {
 	require.NoError(t, err)
 	return data
 }
+
+func TestService_GetUserAvatar(t *testing.T) {
+	t.Run("success", func(t *testing.T) {
+		mockRepo, mockStorage, _, svc := setupTest(t)
+
+		avatar := &domain.Avatar{
+			ID:     "avatar-2",
+			UserID: "user-123",
+			S3Key:  "avatars/user-123/avatar-2",
+		}
+		mockRepo.EXPECT().
+			GetUserAvatar(gomock.Any(), "user-123").
+			Return(avatar, nil)
+
+		reader := io.NopCloser(strings.NewReader("bytes"))
+		mockStorage.EXPECT().
+			Download(gomock.Any(), "avatars/user-123/avatar-2").
+			Return(reader, nil)
+
+		got, r, err := svc.GetUserAvatar(context.Background(), "user-123")
+		require.NoError(t, err)
+		assert.Equal(t, avatar, got)
+		assert.NotNil(t, r)
+		_ = r.Close()
+	})
+
+	t.Run("repo not found", func(t *testing.T) {
+		mockRepo, _, _, svc := setupTest(t)
+
+		mockRepo.EXPECT().
+			GetUserAvatar(gomock.Any(), "nobody").
+			Return(nil, domain.ErrNotFound)
+
+		_, _, err := svc.GetUserAvatar(context.Background(), "nobody")
+		assert.ErrorIs(t, err, domain.ErrNotFound)
+	})
+
+	t.Run("storage error propagated", func(t *testing.T) {
+		mockRepo, mockStorage, _, svc := setupTest(t)
+
+		mockRepo.EXPECT().
+			GetUserAvatar(gomock.Any(), "user-123").
+			Return(&domain.Avatar{ID: "avatar-2", UserID: "user-123", S3Key: "key"}, nil)
+
+		mockStorage.EXPECT().
+			Download(gomock.Any(), "key").
+			Return(nil, errors.New("s3 down"))
+
+		_, _, err := svc.GetUserAvatar(context.Background(), "user-123")
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "download from storage")
+	})
+}

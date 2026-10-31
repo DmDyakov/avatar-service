@@ -59,6 +59,22 @@ func (mr *MockAvatarServiceMockRecorder) GetByID(ctx, id any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetByID", reflect.TypeOf((*MockAvatarService)(nil).GetByID), ctx, id)
 }
 
+// GetUserAvatar mocks base method.
+func (m *MockAvatarService) GetUserAvatar(ctx context.Context, userID string) (*domain.Avatar, io.ReadCloser, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetUserAvatar", ctx, userID)
+	ret0, _ := ret[0].(*domain.Avatar)
+	ret1, _ := ret[1].(io.ReadCloser)
+	ret2, _ := ret[2].(error)
+	return ret0, ret1, ret2
+}
+
+// GetUserAvatar indicates an expected call of GetUserAvatar.
+func (mr *MockAvatarServiceMockRecorder) GetUserAvatar(ctx, userID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetUserAvatar", reflect.TypeOf((*MockAvatarService)(nil).GetUserAvatar), ctx, userID)
+}
+
 // Upload mocks base method.
 func (m *MockAvatarService) Upload(ctx context.Context, userID string, file multipart.File, header *multipart.FileHeader) (*domain.Avatar, error) {
 	m.ctrl.T.Helper()

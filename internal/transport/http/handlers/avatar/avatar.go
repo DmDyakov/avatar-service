@@ -27,6 +27,7 @@ const (
 type AvatarService interface {
 	Upload(ctx context.Context, userID string, file multipart.File, header *multipart.FileHeader) (*domain.Avatar, error)
 	GetByID(ctx context.Context, id string) (*domain.Avatar, io.ReadCloser, error)
+	GetUserAvatar(ctx context.Context, userID string) (*domain.Avatar, io.ReadCloser, error)
 }
 
 type AvatarHandler struct {
@@ -95,6 +96,33 @@ func (h *AvatarHandler) Get(w http.ResponseWriter, r *http.Request) {
 	if _, err := io.Copy(w, reader); err != nil {
 		h.logger.Error("failed to stream avatar",
 			zap.String("avatar_id", avatar.ID),
+			zap.Error(err),
+		)
+	}
+}
+
+// GetUserAvatar обрабатывает GET /api/v1/users/{user_id}/avatar.
+func (h *AvatarHandler) GetUserAvatar(w http.ResponseWriter, r *http.Request) {
+	userID := chi.URLParam(r, "user_id")
+	if userID == "" {
+		handlers.RespondError(w, http.StatusBadRequest, "user_id is required")
+		return
+	}
+
+	avatar, reader, err := h.service.GetUserAvatar(r.Context(), userID)
+	if err != nil {
+		h.handleError(w, err)
+		return
+	}
+	defer reader.Close()
+
+	w.Header().Set("Content-Type", avatar.MimeType)
+	w.WriteHeader(http.StatusOK)
+
+	if _, err := io.Copy(w, reader); err != nil {
+		h.logger.Error("failed to stream avatar",
+			zap.String("avatar_id", avatar.ID),
+			zap.String("user_id", userID),
 			zap.Error(err),
 		)
 	}

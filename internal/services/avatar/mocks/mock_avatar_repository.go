@@ -69,3 +69,18 @@ func (mr *MockAvatarRepositoryMockRecorder) GetByID(ctx, id any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetByID", reflect.TypeOf((*MockAvatarRepository)(nil).GetByID), ctx, id)
 }
+
+// GetUserAvatar mocks base method.
+func (m *MockAvatarRepository) GetUserAvatar(ctx context.Context, userID string) (*domain.Avatar, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetUserAvatar", ctx, userID)
+	ret0, _ := ret[0].(*domain.Avatar)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetUserAvatar indicates an expected call of GetUserAvatar.
+func (mr *MockAvatarRepositoryMockRecorder) GetUserAvatar(ctx, userID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetUserAvatar", reflect.TypeOf((*MockAvatarRepository)(nil).GetUserAvatar), ctx, userID)
+}

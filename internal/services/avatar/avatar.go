@@ -25,6 +25,7 @@ import (
 type AvatarRepository interface {
 	Create(ctx context.Context, avatar *domain.Avatar) error
 	GetByID(ctx context.Context, id string) (*domain.Avatar, error)
+	GetUserAvatar(ctx context.Context, userID string) (*domain.Avatar, error)
 }
 
 //go:generate mockgen -destination=mocks/mock_storage.go -package=mocks avatar-service/internal/services/avatar Storage
@@ -132,6 +133,24 @@ func (s *Service) GetByID(
 	id string,
 ) (*domain.Avatar, io.ReadCloser, error) {
 	avatar, err := s.avatarRepo.GetByID(ctx, id)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	reader, err := s.storage.Download(ctx, avatar.S3Key)
+	if err != nil {
+		return nil, nil, fmt.Errorf("download from storage: %w", err)
+	}
+
+	return avatar, reader, nil
+}
+
+// GetUserAvatar возвращает текущую аватарку пользователя и поток её файла.
+func (s *Service) GetUserAvatar(
+	ctx context.Context,
+	userID string,
+) (*domain.Avatar, io.ReadCloser, error) {
+	avatar, err := s.avatarRepo.GetUserAvatar(ctx, userID)
 	if err != nil {
 		return nil, nil, err
 	}
