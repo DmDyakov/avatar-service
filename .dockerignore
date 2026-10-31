@@ -1,0 +1,31 @@
+# Git
+.git
+.gitignore
+
+# Env
+.env
+.env.*
+!.env.example
+
+# Артефакты сборки
+bin/
+dist/
+coverage.out
+*.test
+*.out
+*.log
+
+# IDE
+.vscode/
+.idea/
+
+# Зависимости
+vendor/
+
+# Не нужно в образе
+README.md
+Makefile
+docker-compose*.yml
+k8s/
+tests/
+docs/

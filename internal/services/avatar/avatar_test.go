@@ -2,7 +2,11 @@ package avatar
 
 import (
 	"context"
+	"errors"
+	"io"
 	"mime/multipart"
+	"os"
+	"strings"
 	"testing"
 
 	"avatar-service/internal/domain"
@@ -29,28 +33,44 @@ func setupTest(t *testing.T) (*mocks.MockAvatarRepository, *mocks.MockStorage, *
 
 func TestService_Upload(t *testing.T) {
 	t.Run("success", func(t *testing.T) {
-		mockRepo, _, _, svc := setupTest(t)
+		mockRepo, mockStorage, mockPublisher, svc := setupTest(t)
 
-		mockRepo.EXPECT().
-			Create(gomock.Any(), gomock.Any()).
-			DoAndReturn(func(ctx context.Context, avatar *domain.Avatar) error {
-				avatar.ID = "avatar-1"
+		mockStorage.EXPECT().
+			Upload(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), "image/jpeg").
+			DoAndReturn(func(ctx context.Context, key string, r io.Reader, size int64, ct string) error {
+				assert.True(t, strings.HasPrefix(key, "avatars/user-123/"),
+					"key должен начинаться с avatars/{userID}/, got %s", key)
 				return nil
 			})
 
-		file, header := createMultipartFile(t, "avatar.jpg", jpegBytes())
+		mockRepo.EXPECT().
+			Create(gomock.Any(), gomock.Any()).
+			Return(nil)
+
+		mockPublisher.EXPECT().
+			PublishUploadEvent(gomock.Any(), gomock.Any()).
+			DoAndReturn(func(ctx context.Context, e domain.AvatarUploadEvent) error {
+				assert.NotEmpty(t, e.AvatarID)
+				assert.Equal(t, "user-123", e.UserID)
+				assert.Contains(t, e.S3Key, "avatars/user-123/")
+				return nil
+			})
+
+		file, header := createMultipartFile(t, "avatar.jpg", jpegBytes(t))
 
 		avatar, err := svc.Upload(context.Background(), "user-123", file, header)
 		require.NoError(t, err)
 		assert.Equal(t, "user-123", avatar.UserID)
 		assert.Equal(t, "image/jpeg", avatar.MimeType)
-		assert.Equal(t, "avatar-1", avatar.ID)
+		assert.NotEmpty(t, avatar.ID)
+		assert.NotNil(t, avatar.Width, "width должен быть заполнен (AS-107.8)")
+		assert.NotNil(t, avatar.Height, "height должен быть заполнен (AS-107.8)")
 	})
 
 	t.Run("invalid format", func(t *testing.T) {
 		_, _, _, svc := setupTest(t)
 
-		file, header := createMultipartFile(t, "test.txt", []byte("hello"))
+		file, header := createMultipartFile(t, "test.txt", []byte("hello world"))
 
 		_, err := svc.Upload(context.Background(), "user-123", file, header)
 		assert.ErrorIs(t, err, domain.ErrInvalidFormat)
@@ -61,187 +81,135 @@ func TestService_Upload(t *testing.T) {
 
 		header := &multipart.FileHeader{
 			Filename: "big.jpg",
-			Size:     maxFileSize + 1,
+			Size:     domain.MaxFileSize + 1,
 		}
 
 		_, err := svc.Upload(context.Background(), "user-123", nil, header)
 		assert.ErrorIs(t, err, domain.ErrFileTooLarge)
 	})
 
-	t.Run("repository error", func(t *testing.T) {
-		mockRepo, _, _, svc := setupTest(t)
+	t.Run("empty file", func(t *testing.T) {
+		_, _, _, svc := setupTest(t)
+
+		header := &multipart.FileHeader{
+			Filename: "empty.jpg",
+			Size:     0,
+		}
+
+		_, err := svc.Upload(context.Background(), "user-123", nil, header)
+		assert.ErrorIs(t, err, domain.ErrInvalidInput)
+	})
+
+	t.Run("invalid image - DecodeConfig fails", func(t *testing.T) {
+		_, _, _, svc := setupTest(t)
+
+		// Magic bytes JPEG валидные (проходит validateUpload), но содержимое
+		// битое — image.DecodeConfig падает, сервис возвращает ErrInvalidFormat.
+		broken := append([]byte{0xFF, 0xD8, 0xFF, 0xE0}, []byte("not a real jpeg")...)
+		file, header := createMultipartFile(t, "broken.jpg", broken)
+
+		_, err := svc.Upload(context.Background(), "user-123", file, header)
+		assert.ErrorIs(t, err, domain.ErrInvalidFormat)
+	})
+
+	t.Run("storage upload error", func(t *testing.T) {
+		_, mockStorage, _, svc := setupTest(t)
+
+		storageErr := errors.New("s3 down")
+		mockStorage.EXPECT().
+			Upload(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+			Return(storageErr)
+
+		file, header := createMultipartFile(t, "avatar.jpg", jpegBytes(t))
+
+		_, err := svc.Upload(context.Background(), "user-123", file, header)
+		assert.ErrorIs(t, err, storageErr)
+	})
+
+	t.Run("repository error - rollback s3", func(t *testing.T) {
+		mockRepo, mockStorage, _, svc := setupTest(t)
+
+		mockStorage.EXPECT().
+			Upload(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+			Return(nil)
 
 		mockRepo.EXPECT().
 			Create(gomock.Any(), gomock.Any()).
 			Return(domain.ErrInvalidInput)
 
-		file, header := createMultipartFile(t, "avatar.jpg", jpegBytes())
+		mockStorage.EXPECT().
+			Delete(gomock.Any(), gomock.Any()).
+			Return(nil)
+
+		// PublishUploadEvent НЕ ожидается — Create упал, публикация не должна вызываться.
+
+		file, header := createMultipartFile(t, "avatar.jpg", jpegBytes(t))
 
 		_, err := svc.Upload(context.Background(), "user-123", file, header)
 		assert.ErrorIs(t, err, domain.ErrInvalidInput)
 	})
-}
 
-func TestService_GetMetadata(t *testing.T) {
-	t.Run("success", func(t *testing.T) {
-		mockRepo, _, _, svc := setupTest(t)
+	t.Run("publish error does not fail upload", func(t *testing.T) {
+		mockRepo, mockStorage, mockPublisher, svc := setupTest(t)
 
-		expected := &domain.Avatar{ID: "avatar-1", UserID: "user-123"}
-		mockRepo.EXPECT().
-			GetByID(gomock.Any(), "avatar-1").
-			Return(expected, nil)
-
-		avatar, err := svc.GetMetadata(context.Background(), "avatar-1")
-		require.NoError(t, err)
-		assert.Equal(t, expected, avatar)
-	})
-
-	t.Run("not found", func(t *testing.T) {
-		mockRepo, _, _, svc := setupTest(t)
-
-		mockRepo.EXPECT().
-			GetByID(gomock.Any(), "unknown").
-			Return(nil, domain.ErrNotFound)
-
-		_, err := svc.GetMetadata(context.Background(), "unknown")
-		assert.ErrorIs(t, err, domain.ErrNotFound)
-	})
-}
-
-func TestService_GetByID(t *testing.T) {
-	t.Run("success", func(t *testing.T) {
-		mockRepo, _, _, svc := setupTest(t)
-
-		expected := &domain.Avatar{ID: "avatar-1"}
-		mockRepo.EXPECT().
-			GetByID(gomock.Any(), "avatar-1").
-			Return(expected, nil)
-
-		avatar, reader, err := svc.GetByID(context.Background(), "avatar-1")
-		require.NoError(t, err)
-		assert.Equal(t, expected, avatar)
-		assert.Nil(t, reader)
-	})
-
-	t.Run("not found", func(t *testing.T) {
-		mockRepo, _, _, svc := setupTest(t)
-
-		mockRepo.EXPECT().
-			GetByID(gomock.Any(), "unknown").
-			Return(nil, domain.ErrNotFound)
-
-		_, _, err := svc.GetByID(context.Background(), "unknown")
-		assert.ErrorIs(t, err, domain.ErrNotFound)
-	})
-}
-
-func TestService_GetUserAvatar(t *testing.T) {
-	t.Run("success", func(t *testing.T) {
-		mockRepo, _, _, svc := setupTest(t)
-
-		expected := &domain.Avatar{ID: "avatar-1", UserID: "user-123"}
-		mockRepo.EXPECT().
-			GetUserAvatar(gomock.Any(), "user-123").
-			Return(expected, nil)
-
-		avatar, reader, err := svc.GetUserAvatar(context.Background(), "user-123")
-		require.NoError(t, err)
-		assert.Equal(t, expected, avatar)
-		assert.Nil(t, reader)
-	})
-
-	t.Run("not found", func(t *testing.T) {
-		mockRepo, _, _, svc := setupTest(t)
-
-		mockRepo.EXPECT().
-			GetUserAvatar(gomock.Any(), "user-123").
-			Return(nil, domain.ErrNotFound)
-
-		_, _, err := svc.GetUserAvatar(context.Background(), "user-123")
-		assert.ErrorIs(t, err, domain.ErrNotFound)
-	})
-}
-
-func TestService_ListByUserID(t *testing.T) {
-	t.Run("success", func(t *testing.T) {
-		mockRepo, _, _, svc := setupTest(t)
-
-		expected := []*domain.Avatar{
-			{ID: "avatar-1", UserID: "user-123"},
-			{ID: "avatar-2", UserID: "user-123"},
-		}
-		mockRepo.EXPECT().
-			ListByUserID(gomock.Any(), "user-123").
-			Return(expected, nil)
-
-		avatars, err := svc.ListByUserID(context.Background(), "user-123")
-		require.NoError(t, err)
-		assert.Len(t, avatars, 2)
-	})
-
-	t.Run("empty list", func(t *testing.T) {
-		mockRepo, _, _, svc := setupTest(t)
-
-		mockRepo.EXPECT().
-			ListByUserID(gomock.Any(), "user-123").
-			Return([]*domain.Avatar{}, nil)
-
-		avatars, err := svc.ListByUserID(context.Background(), "user-123")
-		require.NoError(t, err)
-		assert.Empty(t, avatars)
-	})
-}
-
-func TestService_Delete(t *testing.T) {
-	t.Run("success", func(t *testing.T) {
-		mockRepo, _, _, svc := setupTest(t)
-
-		mockRepo.EXPECT().
-			GetByID(gomock.Any(), "avatar-1").
-			Return(&domain.Avatar{ID: "avatar-1", UserID: "user-123"}, nil)
-
-		mockRepo.EXPECT().
-			SoftDelete(gomock.Any(), "avatar-1").
+		mockStorage.EXPECT().
+			Upload(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 			Return(nil)
 
-		err := svc.Delete(context.Background(), "avatar-1", "user-123")
-		assert.NoError(t, err)
+		mockRepo.EXPECT().
+			Create(gomock.Any(), gomock.Any()).
+			Return(nil)
+
+		// 3 попытки в publishWithRetry, все падают — но Upload всё равно успешен (AS-108.7).
+		mockPublisher.EXPECT().
+			PublishUploadEvent(gomock.Any(), gomock.Any()).
+			Return(errors.New("rabbit down")).
+			Times(3)
+
+		file, header := createMultipartFile(t, "avatar.jpg", jpegBytes(t))
+
+		avatar, err := svc.Upload(context.Background(), "user-123", file, header)
+		require.NoError(t, err)
+		assert.NotEmpty(t, avatar.ID)
 	})
 
-	t.Run("not found", func(t *testing.T) {
-		mockRepo, _, _, svc := setupTest(t)
+	t.Run("publish succeeds on retry", func(t *testing.T) {
+		mockRepo, mockStorage, mockPublisher, svc := setupTest(t)
+
+		mockStorage.EXPECT().
+			Upload(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+			Return(nil)
 
 		mockRepo.EXPECT().
-			GetByID(gomock.Any(), "unknown").
-			Return(nil, domain.ErrNotFound)
+			Create(gomock.Any(), gomock.Any()).
+			Return(nil)
 
-		err := svc.Delete(context.Background(), "unknown", "user-123")
-		assert.ErrorIs(t, err, domain.ErrNotFound)
+		gomock.InOrder(
+			mockPublisher.EXPECT().
+				PublishUploadEvent(gomock.Any(), gomock.Any()).
+				Return(errors.New("transient")),
+			mockPublisher.EXPECT().
+				PublishUploadEvent(gomock.Any(), gomock.Any()).
+				Return(nil),
+		)
+
+		file, header := createMultipartFile(t, "avatar.jpg", jpegBytes(t))
+
+		avatar, err := svc.Upload(context.Background(), "user-123", file, header)
+		require.NoError(t, err)
+		assert.NotEmpty(t, avatar.ID)
 	})
+}
 
-	t.Run("forbidden - not owner", func(t *testing.T) {
-		mockRepo, _, _, svc := setupTest(t)
+// jpegBytes читает реальный JPEG из testdata.
+//
+// Собранный вручную []byte{0xFF, 0xD8, 0xFF, 0xE0} + нули проходит
+// magic-bytes в validateUpload, но image.DecodeConfig на нём падает.
+// Для тестов, где срабатывает AS-107.8, нужен валидный файл.
+func jpegBytes(t *testing.T) []byte {
+	t.Helper()
 
-		mockRepo.EXPECT().
-			GetByID(gomock.Any(), "avatar-1").
-			Return(&domain.Avatar{ID: "avatar-1", UserID: "other-user"}, nil)
-
-		err := svc.Delete(context.Background(), "avatar-1", "user-123")
-		assert.ErrorIs(t, err, domain.ErrForbidden)
-	})
-
-	t.Run("soft delete error", func(t *testing.T) {
-		mockRepo, _, _, svc := setupTest(t)
-
-		mockRepo.EXPECT().
-			GetByID(gomock.Any(), "avatar-1").
-			Return(&domain.Avatar{ID: "avatar-1", UserID: "user-123"}, nil)
-
-		mockRepo.EXPECT().
-			SoftDelete(gomock.Any(), "avatar-1").
-			Return(domain.ErrNotFound)
-
-		err := svc.Delete(context.Background(), "avatar-1", "user-123")
-		assert.ErrorIs(t, err, domain.ErrNotFound)
-	})
+	data, err := os.ReadFile("../../../tests/testdata/avatar.jpg")
+	require.NoError(t, err)
+	return data
 }

@@ -1,4 +1,3 @@
-// Package http реализует HTTP-сервер.
 package http
 
 import (
@@ -26,14 +25,8 @@ type HealthHandler interface {
 
 type AvatarHandler interface {
 	Upload(w http.ResponseWriter, r *http.Request)
-	Get(w http.ResponseWriter, r *http.Request)
-	GetUserAvatar(w http.ResponseWriter, r *http.Request)
-	GetMetadata(w http.ResponseWriter, r *http.Request)
-	ListByUserID(w http.ResponseWriter, r *http.Request)
-	Delete(w http.ResponseWriter, r *http.Request)
 }
 
-// New создаёт HTTP-сервер с настроенными маршрутами и middleware.
 func New(
 	cfg *config.HTTPServerConfig,
 	healthHandler HealthHandler,
@@ -46,15 +39,11 @@ func New(
 	// Health
 	r.Get("/live", healthHandler.Live)
 	r.Get("/ready", healthHandler.Ready)
+	r.Get("/health", healthHandler.Ready)
 
 	// Avatar API
 	r.Route("/api/v1", func(r chi.Router) {
 		r.Post("/avatars", avatarHandler.Upload)
-		r.Get("/avatars/{id}", avatarHandler.Get)
-		r.Get("/avatars/{id}/metadata", avatarHandler.GetMetadata)
-		r.Delete("/avatars/{id}", avatarHandler.Delete)
-		r.Get("/users/{user_id}/avatar", avatarHandler.GetUserAvatar)
-		r.Get("/users/{user_id}/avatars", avatarHandler.ListByUserID)
 	})
 
 	srv := &http.Server{
@@ -72,7 +61,6 @@ func New(
 	}
 }
 
-// Run запускает HTTP-сервер.
 func (s *Server) Run(ctx context.Context) error {
 	s.logger.Info("HTTP server started", zap.String("addr", s.Addr))
 

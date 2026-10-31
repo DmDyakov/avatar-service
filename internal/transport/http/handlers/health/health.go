@@ -11,7 +11,7 @@ import (
 	"go.uber.org/zap"
 )
 
-//go:generate mockgen -destination=mocks/mock_health_service.go -package=mocks avatar-service/internal/transport/http/handlers HealthService
+//go:generate mockgen -destination=mocks/mock_health_service.go -package=mocks avatar-service/internal/transport/http/handlers/health HealthService
 type HealthService interface {
 	Check(ctx context.Context) (*health.Status, int)
 }

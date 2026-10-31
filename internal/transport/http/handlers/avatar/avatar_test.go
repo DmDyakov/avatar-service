@@ -7,6 +7,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"avatar-service/internal/domain"
@@ -28,11 +29,6 @@ func setupTest(t *testing.T) (*mocks.MockAvatarService, http.Handler) {
 
 	router := chi.NewRouter()
 	router.Post("/api/v1/avatars", handler.Upload)
-	router.Get("/api/v1/avatars/{id}", handler.Get)
-	router.Get("/api/v1/avatars/{id}/metadata", handler.GetMetadata)
-	router.Delete("/api/v1/avatars/{id}", handler.Delete)
-	router.Get("/api/v1/users/{user_id}/avatar", handler.GetUserAvatar)
-	router.Get("/api/v1/users/{user_id}/avatars", handler.ListByUserID)
 
 	return mockSvc, router
 }
@@ -89,98 +85,90 @@ func TestAvatarHandler_Upload(t *testing.T) {
 
 		assert.Equal(t, http.StatusBadRequest, rec.Code)
 	})
-}
 
-func TestAvatarHandler_GetMetadata(t *testing.T) {
-	t.Run("success", func(t *testing.T) {
-		mockSvc, router := setupTest(t)
+	t.Run("invalid X-User-ID - path traversal", func(t *testing.T) {
+		_, router := setupTest(t)
 
-		mockSvc.EXPECT().
-			GetMetadata(gomock.Any(), "avatar-1").
-			Return(&domain.Avatar{ID: "avatar-1", UserID: "user-123"}, nil)
+		body, contentType := createMultipartBody(t, "file", "avatar.jpg", []byte("fake"))
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/avatars", body)
+		req.Header.Set("Content-Type", contentType)
+		req.Header.Set("X-User-ID", "../../etc/passwd")
 
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/avatars/avatar-1/metadata", nil)
 		rec := httptest.NewRecorder()
-
 		router.ServeHTTP(rec, req)
 
-		assert.Equal(t, http.StatusOK, rec.Code)
-
-		var response domain.Avatar
-		require.NoError(t, json.NewDecoder(rec.Body).Decode(&response))
-		assert.Equal(t, "avatar-1", response.ID)
+		assert.Equal(t, http.StatusBadRequest, rec.Code)
 	})
 
-	t.Run("not found", func(t *testing.T) {
-		mockSvc, router := setupTest(t)
+	t.Run("X-User-ID too long", func(t *testing.T) {
+		_, router := setupTest(t)
 
-		mockSvc.EXPECT().
-			GetMetadata(gomock.Any(), "unknown").
-			Return(nil, domain.ErrNotFound)
+		body, contentType := createMultipartBody(t, "file", "avatar.jpg", []byte("fake"))
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/avatars", body)
+		req.Header.Set("Content-Type", contentType)
+		req.Header.Set("X-User-ID", strings.Repeat("a", 256))
 
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/avatars/unknown/metadata", nil)
 		rec := httptest.NewRecorder()
-
 		router.ServeHTTP(rec, req)
 
-		assert.Equal(t, http.StatusNotFound, rec.Code)
+		assert.Equal(t, http.StatusBadRequest, rec.Code)
 	})
-}
 
-func TestAvatarHandler_Delete(t *testing.T) {
-	t.Run("success", func(t *testing.T) {
-		mockSvc, router := setupTest(t)
+	t.Run("missing file field", func(t *testing.T) {
+		_, router := setupTest(t)
 
-		mockSvc.EXPECT().
-			Delete(gomock.Any(), "avatar-1", "user-123").
-			Return(nil)
-
-		req := httptest.NewRequest(http.MethodDelete, "/api/v1/avatars/avatar-1", nil)
+		body, contentType := createMultipartBody(t, "wrong_field", "avatar.jpg", []byte("fake"))
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/avatars", body)
+		req.Header.Set("Content-Type", contentType)
 		req.Header.Set("X-User-ID", "user-123")
 
 		rec := httptest.NewRecorder()
 		router.ServeHTTP(rec, req)
 
-		assert.Equal(t, http.StatusNoContent, rec.Code)
+		assert.Equal(t, http.StatusBadRequest, rec.Code)
 	})
 
-	t.Run("forbidden", func(t *testing.T) {
-		mockSvc, router := setupTest(t)
+	t.Run("body too large - 413 with max_size", func(t *testing.T) {
+		_, router := setupTest(t)
 
-		mockSvc.EXPECT().
-			Delete(gomock.Any(), "avatar-1", "other-user").
-			Return(domain.ErrForbidden)
-
-		req := httptest.NewRequest(http.MethodDelete, "/api/v1/avatars/avatar-1", nil)
-		req.Header.Set("X-User-ID", "other-user")
+		// Тело больше 10 MB — MaxBytesReader вернёт MaxBytesError, handler ответит 413.
+		big := bytes.Repeat([]byte("x"), int(domain.MaxFileSize)+1024)
+		body, contentType := createMultipartBody(t, "file", "big.jpg", big)
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/avatars", body)
+		req.Header.Set("Content-Type", contentType)
+		req.Header.Set("X-User-ID", "user-123")
 
 		rec := httptest.NewRecorder()
 		router.ServeHTTP(rec, req)
 
-		assert.Equal(t, http.StatusForbidden, rec.Code)
-	})
-}
+		assert.Equal(t, http.StatusRequestEntityTooLarge, rec.Code)
 
-func TestAvatarHandler_ListByUserID(t *testing.T) {
-	t.Run("success", func(t *testing.T) {
+		var resp map[string]any
+		require.NoError(t, json.NewDecoder(rec.Body).Decode(&resp))
+		assert.Equal(t, "File too large", resp["error"])
+		assert.NotZero(t, resp["max_size"])
+	})
+
+	t.Run("invalid format - 400 with details", func(t *testing.T) {
 		mockSvc, router := setupTest(t)
 
 		mockSvc.EXPECT().
-			ListByUserID(gomock.Any(), "user-123").
-			Return([]*domain.Avatar{
-				{ID: "avatar-1", UserID: "user-123"},
-				{ID: "avatar-2", UserID: "user-123"},
-			}, nil)
+			Upload(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+			Return(nil, domain.ErrInvalidFormat)
 
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/users/user-123/avatars", nil)
+		body, contentType := createMultipartBody(t, "file", "test.txt", []byte("hello"))
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/avatars", body)
+		req.Header.Set("Content-Type", contentType)
+		req.Header.Set("X-User-ID", "user-123")
+
 		rec := httptest.NewRecorder()
-
 		router.ServeHTTP(rec, req)
 
-		assert.Equal(t, http.StatusOK, rec.Code)
+		assert.Equal(t, http.StatusBadRequest, rec.Code)
 
-		var response []*domain.Avatar
-		require.NoError(t, json.NewDecoder(rec.Body).Decode(&response))
-		assert.Len(t, response, 2)
+		var resp map[string]any
+		require.NoError(t, json.NewDecoder(rec.Body).Decode(&resp))
+		assert.Equal(t, "Invalid file format", resp["error"])
+		assert.Contains(t, resp["details"], "jpeg")
 	})
 }

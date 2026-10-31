@@ -12,7 +12,6 @@ package mocks
 import (
 	domain "avatar-service/internal/domain"
 	context "context"
-	io "io"
 	multipart "mime/multipart"
 	reflect "reflect"
 
@@ -41,82 +40,6 @@ func NewMockAvatarService(ctrl *gomock.Controller) *MockAvatarService {
 // EXPECT returns an object that allows the caller to indicate expected use.
 func (m *MockAvatarService) EXPECT() *MockAvatarServiceMockRecorder {
 	return m.recorder
-}
-
-// Delete mocks base method.
-func (m *MockAvatarService) Delete(ctx context.Context, id, userID string) error {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Delete", ctx, id, userID)
-	ret0, _ := ret[0].(error)
-	return ret0
-}
-
-// Delete indicates an expected call of Delete.
-func (mr *MockAvatarServiceMockRecorder) Delete(ctx, id, userID any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Delete", reflect.TypeOf((*MockAvatarService)(nil).Delete), ctx, id, userID)
-}
-
-// GetByID mocks base method.
-func (m *MockAvatarService) GetByID(ctx context.Context, id string) (*domain.Avatar, io.ReadCloser, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetByID", ctx, id)
-	ret0, _ := ret[0].(*domain.Avatar)
-	ret1, _ := ret[1].(io.ReadCloser)
-	ret2, _ := ret[2].(error)
-	return ret0, ret1, ret2
-}
-
-// GetByID indicates an expected call of GetByID.
-func (mr *MockAvatarServiceMockRecorder) GetByID(ctx, id any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetByID", reflect.TypeOf((*MockAvatarService)(nil).GetByID), ctx, id)
-}
-
-// GetMetadata mocks base method.
-func (m *MockAvatarService) GetMetadata(ctx context.Context, id string) (*domain.Avatar, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetMetadata", ctx, id)
-	ret0, _ := ret[0].(*domain.Avatar)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// GetMetadata indicates an expected call of GetMetadata.
-func (mr *MockAvatarServiceMockRecorder) GetMetadata(ctx, id any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetMetadata", reflect.TypeOf((*MockAvatarService)(nil).GetMetadata), ctx, id)
-}
-
-// GetUserAvatar mocks base method.
-func (m *MockAvatarService) GetUserAvatar(ctx context.Context, userID string) (*domain.Avatar, io.ReadCloser, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetUserAvatar", ctx, userID)
-	ret0, _ := ret[0].(*domain.Avatar)
-	ret1, _ := ret[1].(io.ReadCloser)
-	ret2, _ := ret[2].(error)
-	return ret0, ret1, ret2
-}
-
-// GetUserAvatar indicates an expected call of GetUserAvatar.
-func (mr *MockAvatarServiceMockRecorder) GetUserAvatar(ctx, userID any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetUserAvatar", reflect.TypeOf((*MockAvatarService)(nil).GetUserAvatar), ctx, userID)
-}
-
-// ListByUserID mocks base method.
-func (m *MockAvatarService) ListByUserID(ctx context.Context, userID string) ([]*domain.Avatar, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ListByUserID", ctx, userID)
-	ret0, _ := ret[0].([]*domain.Avatar)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// ListByUserID indicates an expected call of ListByUserID.
-func (mr *MockAvatarServiceMockRecorder) ListByUserID(ctx, userID any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListByUserID", reflect.TypeOf((*MockAvatarService)(nil).ListByUserID), ctx, userID)
 }
 
 // Upload mocks base method.

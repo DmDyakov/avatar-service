@@ -1,26 +1,44 @@
-# Build stage
+# ---------- Build stage ----------
 FROM golang:1.27-alpine AS builder
 
 WORKDIR /app
 
+# Сначала go.mod/go.sum — кэш зависимостей переиспользуется, пока не изменится код
 COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .
 
-RUN CGO_ENABLED=0 GOOS=linux go build -o /bin/server ./cmd/server
-RUN CGO_ENABLED=0 GOOS=linux go build -o /bin/worker ./cmd/worker
+# Версия сборки - прокидывается из docker compose build.args
+ARG VERSION=dev
+ARG COMMIT=unknown
+ARG BUILD_DATE=unknown
 
-# Runtime stage
-FROM alpine:latest
+RUN CGO_ENABLED=0 GOOS=linux go build \
+  -ldflags "-X avatar-service/pkg/buildinfo.Version=${VERSION} \
+  -X avatar-service/pkg/buildinfo.Commit=${COMMIT} \
+  -X avatar-service/pkg/buildinfo.Date=${BUILD_DATE}" \
+  -o /bin/server ./cmd/server
 
-RUN apk --no-cache add ca-certificates tzdata
-WORKDIR /root/
+RUN CGO_ENABLED=0 GOOS=linux go build \
+  -ldflags "-X avatar-service/pkg/buildinfo.Version=${VERSION} \
+  -X avatar-service/pkg/buildinfo.Commit=${COMMIT} \
+  -X avatar-service/pkg/buildinfo.Date=${BUILD_DATE}" \
+  -o /bin/worker ./cmd/worker
 
-COPY --from=builder /bin/server .
-COPY --from=builder /bin/worker .
-COPY --from=builder /app/web ./web/
-COPY --from=builder /app/migrations ./migrations/
+# ---------- Runtime stage ----------
+FROM alpine:3.20
+
+RUN apk --no-cache add ca-certificates tzdata \
+  && addgroup -S app \
+  && adduser -S app -G app
+
+WORKDIR /app
+
+COPY --from=builder --chown=app:app /bin/server /bin/worker ./
+COPY --from=builder --chown=app:app /app/web ./web/
+
+USER app
 
 EXPOSE 8080
 

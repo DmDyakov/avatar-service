@@ -13,7 +13,7 @@ import (
 
 func TestValidateUpload(t *testing.T) {
 	t.Run("valid jpeg", func(t *testing.T) {
-		file, header := createMultipartFile(t, "avatar.jpg", jpegBytes())
+		file, header := createMultipartFile(t, "avatar.jpg", jpegBytes(t))
 
 		contentType, err := validateUpload(file, header)
 		require.NoError(t, err)
@@ -39,7 +39,7 @@ func TestValidateUpload(t *testing.T) {
 	t.Run("file too large", func(t *testing.T) {
 		header := &multipart.FileHeader{
 			Filename: "big.jpg",
-			Size:     maxFileSize + 1,
+			Size:     domain.MaxFileSize + 1,
 		}
 
 		_, err := validateUpload(nil, header)
@@ -73,12 +73,12 @@ func TestValidateUpload(t *testing.T) {
 	})
 
 	t.Run("resets reader position", func(t *testing.T) {
-		file, header := createMultipartFile(t, "avatar.jpg", jpegBytes())
+		file, header := createMultipartFile(t, "avatar.jpg", jpegBytes(t))
 
 		_, err := validateUpload(file, header)
 		require.NoError(t, err)
 
-		// После валидации reader должен быть в начале
+		// После валидации reader должен быть в начале.
 		buf := make([]byte, 3)
 		n, err := file.Read(buf)
 		require.NoError(t, err)
@@ -106,7 +106,6 @@ func createMultipartFile(t *testing.T, filename string, content []byte) (multipa
 	form, err := reader.ReadForm(int64(len(content)) + 1024)
 	require.NoError(t, err)
 
-
 	fileHeader := form.File["file"][0]
 
 	file, err := fileHeader.Open()
@@ -120,19 +119,15 @@ func createMultipartFile(t *testing.T, filename string, content []byte) (multipa
 	return file, fileHeader
 }
 
-// jpegBytes возвращает минимальный валидный JPEG (magic bytes).
-func jpegBytes() []byte {
-	// JPEG: FF D8 FF
-	return append([]byte{0xFF, 0xD8, 0xFF, 0xE0}, bytes.Repeat([]byte{0x00}, 100)...)
-}
-
-// pngBytes возвращает минимальный валидный PNG (magic bytes).
+// pngBytes возвращает минимальный валидный PNG (только magic bytes).
+// Используется только в тестах validateUpload, где DecodeConfig не вызывается.
 func pngBytes() []byte {
 	// PNG: 89 50 4E 47 0D 0A 1A 0A
 	return append([]byte{0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A}, bytes.Repeat([]byte{0x00}, 100)...)
 }
 
-// webpBytes возвращает минимальный валидный WebP (magic bytes).
+// webpBytes возвращает минимальный валидный WebP (только magic bytes).
+// Используется только в тестах validateUpload, где DecodeConfig не вызывается.
 func webpBytes() []byte {
 	// WebP: RIFF....WEBP
 	header := []byte{

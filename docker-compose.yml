@@ -2,36 +2,163 @@ services:
   postgres:
     image: postgres:16-alpine
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: avatars
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER is required}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB is required}
     ports:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s
       timeout: 5s
       retries: 5
+    networks:
+      - backend
 
   minio:
-    image: quay.io/minio/minio:latest
-    command: server /data --console-address ":9001"
+    image: bitnamilegacy/minio:2025.7.23-debian-12-r5
+    command: server /bitnami/minio/data --console-address ":9001"
     environment:
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadmin
+      MINIO_ROOT_USER: ${S3_ACCESS_KEY:?S3_ACCESS_KEY is required}
+      MINIO_ROOT_PASSWORD: ${S3_SECRET_KEY:?S3_SECRET_KEY is required}
     ports:
       - "9000:9000"
       - "9001:9001"
     volumes:
-      - minio_data:/data
+      - minio_data:/bitnami/minio/data
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      test: ["CMD", "mc", "ready", "local"]
       interval: 5s
       timeout: 5s
       retries: 5
+    networks:
+      - backend
+
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    hostname: rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:?RABBITMQ_USER is required}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD is required}
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+    networks:
+      - backend
+
+  server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        VERSION: ${VERSION:-dev}
+        COMMIT: ${COMMIT:-unknown}
+        BUILD_DATE: ${BUILD_DATE:-unknown}
+    image: avatar-service:local
+    command: ["./server"]
+    environment:
+      APP_ENV: ${APP_ENV:-dev}
+      SHUTDOWN_TIMEOUT: ${SHUTDOWN_TIMEOUT:-10s}
+      HTTP_ADDRESS: ":8080"
+
+      # Postgres — отдельные поля, DSN собирает приложение в config.Load()
+      POSTGRES_USER: ${POSTGRES_USER:?required}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?required}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: ${POSTGRES_DB:?required}
+      POSTGRES_SSLMODE: ${POSTGRES_SSLMODE:-disable}
+      POSTGRES_MIGRATE_ON_START: "true"
+
+      # S3 / MinIO
+      S3_ENDPOINT: minio:9000
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY:?required}
+      S3_SECRET_KEY: ${S3_SECRET_KEY:?required}
+      S3_BUCKET: ${S3_BUCKET:-avatars}
+      S3_USE_SSL: "false"
+      S3_FORCE_PATH_STYLE: "true"
+
+      # RabbitMQ — отдельные поля, URL собирает приложение в config.Load()
+      RABBITMQ_USER: ${RABBITMQ_USER:?required}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:?required}
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: "5672"
+      RABBITMQ_VHOST: ${RABBITMQ_VHOST:-/}
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - backend
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        VERSION: ${VERSION:-dev}
+        COMMIT: ${COMMIT:-unknown}
+        BUILD_DATE: ${BUILD_DATE:-unknown}
+    image: avatar-service:local
+    command: ["./worker"]
+    environment:
+      APP_ENV: ${APP_ENV:-dev}
+      SHUTDOWN_TIMEOUT: ${SHUTDOWN_TIMEOUT:-10s}
+
+      # Postgres — отдельные поля, DSN собирает приложение в config.Load()
+      POSTGRES_USER: ${POSTGRES_USER:?required}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?required}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: ${POSTGRES_DB:?required}
+      POSTGRES_SSLMODE: ${POSTGRES_SSLMODE:-disable}
+      POSTGRES_MIGRATE_ON_START: "false"
+
+      # S3 / MinIO
+      S3_ENDPOINT: minio:9000
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY:?required}
+      S3_SECRET_KEY: ${S3_SECRET_KEY:?required}
+      S3_BUCKET: ${S3_BUCKET:-avatars}
+      S3_USE_SSL: "false"
+      S3_FORCE_PATH_STYLE: "true"
+
+      # RabbitMQ — отдельные поля, URL собирает приложение в config.Load()
+      RABBITMQ_USER: ${RABBITMQ_USER:?required}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:?required}
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: "5672"
+      RABBITMQ_VHOST: ${RABBITMQ_VHOST:-/}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - backend
+    restart: unless-stopped
 
 volumes:
   postgres_data:
   minio_data:
+  rabbitmq_data:
+
+networks:
+  backend:
+    driver: bridge

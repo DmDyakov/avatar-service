@@ -2,8 +2,11 @@
 package app
 
 import (
+	"context"
+	"fmt"
+
+	"avatar-service/internal/broker/rabbitmq"
 	"avatar-service/internal/config"
-	"avatar-service/internal/publisher"
 	"avatar-service/internal/storage/minio"
 
 	"avatar-service/internal/repository/postgres"
@@ -15,9 +18,6 @@ import (
 	avatarrepo "avatar-service/internal/repository/postgres/avatar"
 	avatarservice "avatar-service/internal/services/avatar"
 	avatarhandler "avatar-service/internal/transport/http/handlers/avatar"
-
-	"context"
-	"fmt"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
@@ -31,6 +31,7 @@ type App struct {
 	pgPool     *pgxpool.Pool
 	httpServer *httpserver.Server
 	storage    *minio.Storage
+	publisher  *rabbitmq.Publisher
 }
 
 // New создаёт новый App.
@@ -45,11 +46,16 @@ func New(cfg *config.Config, logger *zap.Logger) (*App, error) {
 		return nil, fmt.Errorf("storage: %w", err)
 	}
 
-	pub := publisher.NewPublisher()
+	pub, err := rabbitmq.NewPublisher(cfg.RabbitMQ, logger)
+	if err != nil {
+		return nil, fmt.Errorf("rabbitmq publisher: %w", err)
+	}
 
 	healthService := healthservice.New()
 	healthService.Register("postgres", pgPool)
 	healthService.Register("storage", storage)
+	healthService.Register("rabbitmq", pub) // Publisher реализует Ping
+
 	healthHandler := healthhandler.NewHealthHandler(healthService, logger)
 
 	avatarRepo := avatarrepo.NewAvatarRepository(pgPool)
@@ -69,12 +75,14 @@ func New(cfg *config.Config, logger *zap.Logger) (*App, error) {
 		pgPool:     pgPool,
 		httpServer: httpServer,
 		storage:    storage,
+		publisher:  pub,
 	}, nil
 }
 
 // Run запускает сервер.
 func (a *App) Run(ctx context.Context) error {
 	defer a.pgPool.Close()
+	defer a.publisher.Close()
 
 	g, ctx := errgroup.WithContext(ctx)
 

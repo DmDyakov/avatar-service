@@ -10,17 +10,14 @@ import (
 	"avatar-service/internal/domain"
 )
 
-const maxFileSize = 10 * 1024 * 1024 // 10 MB
-
 var supportedMIME = map[string]bool{
 	"image/jpeg": true,
 	"image/png":  true,
 	"image/webp": true,
 }
 
-// validateUpload проверяет файл перед загрузкой.
 func validateUpload(file multipart.File, header *multipart.FileHeader) (string, error) {
-	if header.Size > maxFileSize {
+	if header.Size > domain.MaxFileSize {
 		return "", domain.ErrFileTooLarge
 	}
 	if header.Size == 0 {
@@ -45,14 +42,11 @@ func validateUpload(file multipart.File, header *multipart.FileHeader) (string, 
 	return contentType, nil
 }
 
-// detectMIME определяет MIME-тип по magic bytes.
 func detectMIME(data []byte) string {
-	// WebP: RIFF????WEBP
 	if len(data) >= 12 &&
 		bytes.Equal(data[0:4], []byte("RIFF")) &&
 		bytes.Equal(data[8:12], []byte("WEBP")) {
 		return "image/webp"
 	}
-
 	return http.DetectContentType(data)
 }

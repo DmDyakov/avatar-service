@@ -55,21 +55,6 @@ func (mr *MockStorageMockRecorder) Delete(ctx, key any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Delete", reflect.TypeOf((*MockStorage)(nil).Delete), ctx, key)
 }
 
-// Download mocks base method.
-func (m *MockStorage) Download(ctx context.Context, key string) (io.ReadCloser, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Download", ctx, key)
-	ret0, _ := ret[0].(io.ReadCloser)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// Download indicates an expected call of Download.
-func (mr *MockStorageMockRecorder) Download(ctx, key any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Download", reflect.TypeOf((*MockStorage)(nil).Download), ctx, key)
-}
-
 // Upload mocks base method.
 func (m *MockStorage) Upload(ctx context.Context, key string, reader io.Reader, size int64, contentType string) error {
 	m.ctrl.T.Helper()

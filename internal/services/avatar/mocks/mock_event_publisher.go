@@ -41,30 +41,16 @@ func (m *MockEventPublisher) EXPECT() *MockEventPublisherMockRecorder {
 	return m.recorder
 }
 
-// PublishAvatarDeleted mocks base method.
-func (m *MockEventPublisher) PublishAvatarDeleted(ctx context.Context, event domain.AvatarDeletedEvent) error {
+// PublishUploadEvent mocks base method.
+func (m *MockEventPublisher) PublishUploadEvent(ctx context.Context, event domain.AvatarUploadEvent) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "PublishAvatarDeleted", ctx, event)
+	ret := m.ctrl.Call(m, "PublishUploadEvent", ctx, event)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
-// PublishAvatarDeleted indicates an expected call of PublishAvatarDeleted.
-func (mr *MockEventPublisherMockRecorder) PublishAvatarDeleted(ctx, event any) *gomock.Call {
+// PublishUploadEvent indicates an expected call of PublishUploadEvent.
+func (mr *MockEventPublisherMockRecorder) PublishUploadEvent(ctx, event any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "PublishAvatarDeleted", reflect.TypeOf((*MockEventPublisher)(nil).PublishAvatarDeleted), ctx, event)
-}
-
-// PublishAvatarUploaded mocks base method.
-func (m *MockEventPublisher) PublishAvatarUploaded(ctx context.Context, event domain.AvatarUploadedEvent) error {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "PublishAvatarUploaded", ctx, event)
-	ret0, _ := ret[0].(error)
-	return ret0
-}
-
-// PublishAvatarUploaded indicates an expected call of PublishAvatarUploaded.
-func (mr *MockEventPublisherMockRecorder) PublishAvatarUploaded(ctx, event any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "PublishAvatarUploaded", reflect.TypeOf((*MockEventPublisher)(nil).PublishAvatarUploaded), ctx, event)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "PublishUploadEvent", reflect.TypeOf((*MockEventPublisher)(nil).PublishUploadEvent), ctx, event)
 }

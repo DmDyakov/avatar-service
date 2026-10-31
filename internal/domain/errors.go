@@ -9,8 +9,4 @@ var (
 
 	ErrInvalidFormat = errors.New("invalid file format")
 	ErrFileTooLarge  = errors.New("file too large")
-
-	ErrAlreadyProcessed = errors.New("already processed")
-	ErrProcessingFailed = errors.New("processing failed")
-	ErrMaxAttempts      = errors.New("max attempts reached")
 )

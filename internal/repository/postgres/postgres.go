@@ -23,8 +23,10 @@ func NewPool(cfg config.PostgresConfig, logger *zap.Logger) (*pgxpool.Pool, erro
 		return nil, fmt.Errorf("postgres: DSN is required")
 	}
 
-	if err := runMigrations(cfg, logger); err != nil {
-		return nil, fmt.Errorf("postgres: failed to run migrations: %w", err)
+	if cfg.MigrateOnStart {
+		if err := runMigrations(cfg, logger); err != nil {
+			return nil, fmt.Errorf("postgres: failed to run migrations: %w", err)
+		}
 	}
 
 	poolConfig, err := pgxpool.ParseConfig(cfg.DSN)
@@ -47,7 +49,9 @@ func NewPool(cfg config.PostgresConfig, logger *zap.Logger) (*pgxpool.Pool, erro
 		return nil, fmt.Errorf("postgres: failed to establish connection: %w", err)
 	}
 
-	logger.Info("postgres connection established")
+	logger.Info("postgres connection established",
+		zap.String("dsn", cfg.DSNRedacted()),
+	)
 
 	return pool, nil
 }
