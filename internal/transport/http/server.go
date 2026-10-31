@@ -43,6 +43,11 @@ func New(
 	r.Get("/ready", healthHandler.Ready)
 	r.Get("/health", healthHandler.Ready)
 
+	// Web: форма загрузки
+	r.Get("/web/upload", func(w http.ResponseWriter, r *http.Request) {
+		http.ServeFile(w, r, "./web/static/index.html")
+	})
+
 	// Avatar API
 	r.Route("/api/v1", func(r chi.Router) {
 		r.Post("/avatars", avatarHandler.Upload)
