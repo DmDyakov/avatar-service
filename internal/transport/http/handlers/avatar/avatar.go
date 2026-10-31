@@ -88,17 +88,8 @@ func (h *AvatarHandler) Get(w http.ResponseWriter, r *http.Request) {
 		h.handleError(w, err)
 		return
 	}
-	defer reader.Close()
 
-	w.Header().Set("Content-Type", avatar.MimeType)
-	w.WriteHeader(http.StatusOK)
-
-	if _, err := io.Copy(w, reader); err != nil {
-		h.logger.Error("failed to stream avatar",
-			zap.String("avatar_id", avatar.ID),
-			zap.Error(err),
-		)
-	}
+	h.streamAvatar(w, avatar, reader)
 }
 
 // GetUserAvatar обрабатывает GET /api/v1/users/{user_id}/avatar.
@@ -114,6 +105,12 @@ func (h *AvatarHandler) GetUserAvatar(w http.ResponseWriter, r *http.Request) {
 		h.handleError(w, err)
 		return
 	}
+
+	h.streamAvatar(w, avatar, reader)
+}
+
+// streamAvatar отдаёт файл аватарки в response.
+func (h *AvatarHandler) streamAvatar(w http.ResponseWriter, avatar *domain.Avatar, reader io.ReadCloser) {
 	defer reader.Close()
 
 	w.Header().Set("Content-Type", avatar.MimeType)
@@ -122,7 +119,7 @@ func (h *AvatarHandler) GetUserAvatar(w http.ResponseWriter, r *http.Request) {
 	if _, err := io.Copy(w, reader); err != nil {
 		h.logger.Error("failed to stream avatar",
 			zap.String("avatar_id", avatar.ID),
-			zap.String("user_id", userID),
+			zap.String("user_id", avatar.UserID),
 			zap.Error(err),
 		)
 	}

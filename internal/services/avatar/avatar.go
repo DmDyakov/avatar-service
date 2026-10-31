@@ -133,16 +133,7 @@ func (s *Service) GetByID(
 	id string,
 ) (*domain.Avatar, io.ReadCloser, error) {
 	avatar, err := s.avatarRepo.GetByID(ctx, id)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	reader, err := s.storage.Download(ctx, avatar.S3Key)
-	if err != nil {
-		return nil, nil, fmt.Errorf("download from storage: %w", err)
-	}
-
-	return avatar, reader, nil
+	return s.fetchAvatar(ctx, avatar, err)
 }
 
 // GetUserAvatar возвращает текущую аватарку пользователя и поток её файла.
@@ -151,6 +142,15 @@ func (s *Service) GetUserAvatar(
 	userID string,
 ) (*domain.Avatar, io.ReadCloser, error) {
 	avatar, err := s.avatarRepo.GetUserAvatar(ctx, userID)
+	return s.fetchAvatar(ctx, avatar, err)
+}
+
+// fetchAvatar скачивает файл аватарки из storage по S3Key и возвращает поток.
+func (s *Service) fetchAvatar(
+	ctx context.Context,
+	avatar *domain.Avatar,
+	err error,
+) (*domain.Avatar, io.ReadCloser, error) {
 	if err != nil {
 		return nil, nil, err
 	}
