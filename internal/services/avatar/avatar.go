@@ -15,7 +15,6 @@ import (
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 
-	// Регистрируем декодеры для image.DecodeConfig (AS-107.8).
 	_ "image/jpeg"
 	_ "image/png"
 
@@ -25,11 +24,13 @@ import (
 //go:generate mockgen -destination=mocks/mock_avatar_repository.go -package=mocks avatar-service/internal/services/avatar AvatarRepository
 type AvatarRepository interface {
 	Create(ctx context.Context, avatar *domain.Avatar) error
+	GetByID(ctx context.Context, id string) (*domain.Avatar, error)
 }
 
 //go:generate mockgen -destination=mocks/mock_storage.go -package=mocks avatar-service/internal/services/avatar Storage
 type Storage interface {
 	Upload(ctx context.Context, key string, reader io.Reader, size int64, contentType string) error
+	Download(ctx context.Context, key string) (io.ReadCloser, error)
 	Delete(ctx context.Context, key string) error
 }
 
@@ -72,7 +73,6 @@ func (s *Service) Upload(
 		return nil, err
 	}
 
-	// width/height через DecodeConfig - читает только header.
 	width, height, err := decodeDimensions(file)
 	if err != nil {
 		return nil, err
@@ -109,7 +109,6 @@ func (s *Service) Upload(
 		return nil, fmt.Errorf("create avatar: %w", err)
 	}
 
-	// Публикация best-effort: сбой не ломает 201.
 	event := domain.AvatarUploadEvent{
 		AvatarID: avatar.ID,
 		UserID:   userID,
@@ -125,6 +124,24 @@ func (s *Service) Upload(
 	}
 
 	return avatar, nil
+}
+
+// GetByID возвращает метаданные аватарки и поток её файла.
+func (s *Service) GetByID(
+	ctx context.Context,
+	id string,
+) (*domain.Avatar, io.ReadCloser, error) {
+	avatar, err := s.avatarRepo.GetByID(ctx, id)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	reader, err := s.storage.Download(ctx, avatar.S3Key)
+	if err != nil {
+		return nil, nil, fmt.Errorf("download from storage: %w", err)
+	}
+
+	return avatar, reader, nil
 }
 
 // decodeDimensions читает width/height из заголовка изображения.

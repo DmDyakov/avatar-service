@@ -12,6 +12,7 @@ package mocks
 import (
 	domain "avatar-service/internal/domain"
 	context "context"
+	io "io"
 	multipart "mime/multipart"
 	reflect "reflect"
 
@@ -40,6 +41,22 @@ func NewMockAvatarService(ctrl *gomock.Controller) *MockAvatarService {
 // EXPECT returns an object that allows the caller to indicate expected use.
 func (m *MockAvatarService) EXPECT() *MockAvatarServiceMockRecorder {
 	return m.recorder
+}
+
+// GetByID mocks base method.
+func (m *MockAvatarService) GetByID(ctx context.Context, id string) (*domain.Avatar, io.ReadCloser, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetByID", ctx, id)
+	ret0, _ := ret[0].(*domain.Avatar)
+	ret1, _ := ret[1].(io.ReadCloser)
+	ret2, _ := ret[2].(error)
+	return ret0, ret1, ret2
+}
+
+// GetByID indicates an expected call of GetByID.
+func (mr *MockAvatarServiceMockRecorder) GetByID(ctx, id any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetByID", reflect.TypeOf((*MockAvatarService)(nil).GetByID), ctx, id)
 }
 
 // Upload mocks base method.

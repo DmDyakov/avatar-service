@@ -4,6 +4,7 @@ package avatar
 import (
 	"context"
 	"errors"
+	"io"
 	"mime/multipart"
 	"net/http"
 	"regexp"
@@ -11,6 +12,7 @@ import (
 	"avatar-service/internal/domain"
 	"avatar-service/internal/transport/http/handlers"
 
+	"github.com/go-chi/chi/v5"
 	"go.uber.org/zap"
 )
 
@@ -24,6 +26,7 @@ const (
 //go:generate mockgen -source=avatar.go -destination=mocks/mock_avatar_service.go -package=mocks
 type AvatarService interface {
 	Upload(ctx context.Context, userID string, file multipart.File, header *multipart.FileHeader) (*domain.Avatar, error)
+	GetByID(ctx context.Context, id string) (*domain.Avatar, io.ReadCloser, error)
 }
 
 type AvatarHandler struct {
@@ -71,9 +74,37 @@ func (h *AvatarHandler) Upload(w http.ResponseWriter, r *http.Request) {
 	handlers.RespondJSON(w, http.StatusCreated, avatar)
 }
 
+// Get обрабатывает GET /api/v1/avatars/{id}.
+func (h *AvatarHandler) Get(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if id == "" {
+		handlers.RespondError(w, http.StatusBadRequest, "id is required")
+		return
+	}
+
+	avatar, reader, err := h.service.GetByID(r.Context(), id)
+	if err != nil {
+		h.handleError(w, err)
+		return
+	}
+	defer reader.Close()
+
+	w.Header().Set("Content-Type", avatar.MimeType)
+	w.WriteHeader(http.StatusOK)
+
+	if _, err := io.Copy(w, reader); err != nil {
+		h.logger.Error("failed to stream avatar",
+			zap.String("avatar_id", avatar.ID),
+			zap.Error(err),
+		)
+	}
+}
+
 // handleError преобразует доменные ошибки в HTTP-ответы.
 func (h *AvatarHandler) handleError(w http.ResponseWriter, err error) {
 	switch {
+	case errors.Is(err, domain.ErrNotFound):
+		handlers.RespondError(w, http.StatusNotFound, "avatar not found")
 	case errors.Is(err, domain.ErrForbidden):
 		handlers.RespondErrorWithDetails(w, http.StatusForbidden,
 			"Forbidden", "You can only delete your own avatars")
@@ -84,8 +115,6 @@ func (h *AvatarHandler) handleError(w http.ResponseWriter, err error) {
 		handlers.RespondErrorFileTooLarge(w, domain.MaxFileSize)
 	case errors.Is(err, domain.ErrInvalidInput):
 		handlers.RespondError(w, http.StatusBadRequest, "invalid input")
-	case errors.Is(err, domain.ErrNotFound):
-		handlers.RespondError(w, http.StatusNotFound, "avatar not found")
 	default:
 		h.logger.Error("internal error", zap.Error(err))
 		handlers.RespondError(w, http.StatusInternalServerError, "internal server error")
