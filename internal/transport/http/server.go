@@ -25,6 +25,7 @@ type HealthHandler interface {
 
 type AvatarHandler interface {
 	Upload(w http.ResponseWriter, r *http.Request)
+	PostUpload(w http.ResponseWriter, r *http.Request)
 	Get(w http.ResponseWriter, r *http.Request)
 	GetUserAvatar(w http.ResponseWriter, r *http.Request)
 }
@@ -47,6 +48,7 @@ func New(
 	r.Get("/web/upload", func(w http.ResponseWriter, r *http.Request) {
 		http.ServeFile(w, r, "./web/static/index.html")
 	})
+	r.Post("/web/upload", avatarHandler.PostUpload)
 
 	// Avatar API
 	r.Route("/api/v1", func(r chi.Router) {

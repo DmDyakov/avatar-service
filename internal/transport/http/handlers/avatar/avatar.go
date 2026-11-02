@@ -75,6 +75,46 @@ func (h *AvatarHandler) Upload(w http.ResponseWriter, r *http.Request) {
 	handlers.RespondJSON(w, http.StatusCreated, avatar)
 }
 
+// PostUpload обрабатывает POST /web/upload (AS-111).
+//
+// Гибридный вариант: форма отправляется нативно (если JS отключён),
+// сервер делает 303 See Other на галерею. Если JS работает,
+// форма перехватывает submit и использует /api/v1/avatars.
+func (h *AvatarHandler) PostUpload(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, domain.MaxFileSize)
+
+	if err := r.ParseMultipartForm(domain.MaxFileSize); err != nil {
+		var maxBytesErr *http.MaxBytesError
+		if errors.As(err, &maxBytesErr) {
+			handlers.RespondErrorFileTooLarge(w, domain.MaxFileSize)
+			return
+		}
+		handlers.RespondError(w, http.StatusBadRequest, "invalid multipart form")
+		return
+	}
+
+	userID := r.FormValue("user_id")
+	if err := validateUserID(userID); err != nil {
+		handlers.RespondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	file, header, err := r.FormFile("file")
+	if err != nil {
+		handlers.RespondError(w, http.StatusBadRequest, "file field is required")
+		return
+	}
+	defer file.Close()
+
+	_, err = h.service.Upload(r.Context(), userID, file, header)
+	if err != nil {
+		h.handleError(w, err)
+		return
+	}
+
+	http.Redirect(w, r, "/web/gallery/"+userID, http.StatusSeeOther)
+}
+
 // Get обрабатывает GET /api/v1/avatars/{id}.
 func (h *AvatarHandler) Get(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
