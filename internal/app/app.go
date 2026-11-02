@@ -1,4 +1,5 @@
-// Package app собирает и запускает сервер.
+// Package app собирает зависимости и запускает сервер (App)
+// и воркер (WorkerApp).
 package app
 
 import (
