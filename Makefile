@@ -82,3 +82,15 @@ infra-down: ## Остановить инфраструктуру (данные �
 # --- Утилиты ---
 clean: ## Удалить бинарники и coverage
 	rm -rf bin/ coverage.out
+
+# --- OpenAPI ---
+openapi-validate: ## Проверить OpenAPI-спеку (docker, python)
+	@docker run --rm -v "$(PWD):/spec" python:3-alpine sh -c \
+		"pip install -q openapi-spec-validator && openapi-spec-validator /spec/internal/api/openapi.yaml"
+
+openapi-ui: ## Открыть Swagger UI на http://localhost:8081
+	@echo "Swagger UI: http://localhost:8081"
+	@docker run --rm -p 8081:8080 \
+		-e SWAGGER_JSON=/spec/openapi.yaml \
+		-v "$(PWD)/internal/api:/spec" \
+		swaggerapi/swagger-ui
