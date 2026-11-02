@@ -27,8 +27,8 @@ type Consumer struct {
 	ch   *amqp.Channel
 }
 
-// NewConsumer подключается к RabbitMQ, объявляет топологию thumbnail-очереди
-// и открывает канал с включённым Recovery.
+// NewConsumer подключается к RabbitMQ, объявляет топологию через общий
+// Declare и открывает канал с включённым Recovery.
 func NewConsumer(cfg config.RabbitMQConfig, logger *zap.Logger) (*Consumer, error) {
 	conn, err := amqp.DialConfig(cfg.URL, amqp.Config{
 		Heartbeat: cfg.Heartbeat,
@@ -41,7 +41,7 @@ func NewConsumer(cfg config.RabbitMQConfig, logger *zap.Logger) (*Consumer, erro
 
 	ch, err := conn.Channel()
 	if err != nil {
-		if closeErr := conn.Close(); closeErr != nil {
+		if closeErr := conn.Close(); closeErr != nil && closeErr != amqp.ErrClosed {
 			return nil, errors.Join(
 				fmt.Errorf("open channel: %w", err),
 				fmt.Errorf("close conn: %w", closeErr),
@@ -67,23 +67,14 @@ func NewConsumer(cfg config.RabbitMQConfig, logger *zap.Logger) (*Consumer, erro
 	return c, nil
 }
 
-// declare объявляет exchange и thumbnail queue; идемпотентно —
-// если publisher уже объявил, RabbitMQ просто подтвердит.
+// declare объявляет топологию через общий Declare.
 func (c *Consumer) declare() error {
-	if err := c.ch.ExchangeDeclare(ExchangeName, ExchangeType, true, false, false, false, nil); err != nil {
-		return fmt.Errorf("declare exchange: %w", err)
-	}
-	if _, err := c.ch.QueueDeclare(ThumbnailQueueName, true, false, false, false, nil); err != nil {
-		return fmt.Errorf("declare queue: %w", err)
-	}
-	if err := c.ch.QueueBind(ThumbnailQueueName, UploadRoutingKey, ExchangeName, false, nil); err != nil {
-		return fmt.Errorf("bind queue: %w", err)
-	}
-	return nil
+	return Declare(c.ch)
 }
 
 // Run блокируется до отмены ctx, читая сообщения из thumbnail-очереди
-// и передавая их в handler.
+// и передавая их в handler. При ошибке handler — Nack без requeue,
+// сообщение уходит в DLX → DLQ.
 func (c *Consumer) Run(ctx context.Context, handler MessageHandler) error {
 	if err := c.ch.Qos(c.prefetch, 0, false); err != nil {
 		return fmt.Errorf("set qos: %w", err)
@@ -116,7 +107,8 @@ func (c *Consumer) Run(ctx context.Context, handler MessageHandler) error {
 
 			if hErr := handler(ctx, msg.Body); hErr != nil {
 				c.logger.Error("handler failed", zap.Error(hErr))
-				if nackErr := msg.Nack(false, true); nackErr != nil {
+				// requeue=false → DLX → DLQ
+				if nackErr := msg.Nack(false, false); nackErr != nil {
 					c.logger.Error("nack failed",
 						zap.String("message_id", msg.MessageId),
 						zap.Error(nackErr),
@@ -135,7 +127,7 @@ func (c *Consumer) Run(ctx context.Context, handler MessageHandler) error {
 	}
 }
 
-// Close закрывает канал и соединение; ошибки закрытия объединяются.
+// Close закрывает канал и соединение; ошибки объединяются.
 func (c *Consumer) Close() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -151,6 +143,8 @@ func (c *Consumer) Close() error {
 		if err := c.conn.Close(); err != nil && err != amqp.ErrClosed {
 			if firstErr == nil {
 				firstErr = err
+			} else {
+				firstErr = errors.Join(firstErr, err)
 			}
 		}
 		c.conn = nil

@@ -3,6 +3,7 @@ package rabbitmq
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -12,13 +13,6 @@ import (
 
 	amqp "github.com/rabbitmq/amqp091-go"
 	"go.uber.org/zap"
-)
-
-const (
-	ExchangeName       = "avatars.exchange"
-	ExchangeType       = "topic"
-	ThumbnailQueueName = "avatars.thumbnail.queue"
-	UploadRoutingKey   = "avatar.uploaded"
 )
 
 // Publisher публикует события в RabbitMQ.
@@ -33,12 +27,12 @@ type Publisher struct {
 }
 
 // NewPublisher создаёт подключение с включённым авто-восстановлением
-// и объявляет необходимую топологию.
+// и объявляет топологию через общий Declare.
 func NewPublisher(cfg config.RabbitMQConfig, logger *zap.Logger) (*Publisher, error) {
 	conn, err := amqp.DialConfig(cfg.URL, amqp.Config{
 		Heartbeat: cfg.Heartbeat,
 		Dial:      amqp.DefaultDial(cfg.ConnectTimeout),
-		Recovery:  &amqp.Recovery{}, // <-- Ключевой момент: включаем авто-восстановление
+		Recovery:  &amqp.Recovery{},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("dial rabbitmq: %w", err)
@@ -46,7 +40,12 @@ func NewPublisher(cfg config.RabbitMQConfig, logger *zap.Logger) (*Publisher, er
 
 	ch, err := conn.Channel()
 	if err != nil {
-		_ = conn.Close()
+		if closeErr := conn.Close(); closeErr != nil && closeErr != amqp.ErrClosed {
+			return nil, errors.Join(
+				fmt.Errorf("open channel: %w", err),
+				fmt.Errorf("close conn: %w", closeErr),
+			)
+		}
 		return nil, fmt.Errorf("open channel: %w", err)
 	}
 
@@ -57,51 +56,28 @@ func NewPublisher(cfg config.RabbitMQConfig, logger *zap.Logger) (*Publisher, er
 	}
 
 	if err := p.declareTopology(); err != nil {
-		_ = p.Close()
+		if closeErr := p.Close(); closeErr != nil {
+			return nil, errors.Join(
+				fmt.Errorf("declare topology: %w", err),
+				fmt.Errorf("close publisher: %w", closeErr),
+			)
+		}
 		return nil, fmt.Errorf("declare topology: %w", err)
 	}
 
 	logger.Info("rabbitmq publisher initialized with auto-recovery",
 		zap.String("exchange", ExchangeName),
 		zap.String("queue", ThumbnailQueueName),
+		zap.String("dlx", DLXName),
+		zap.String("dlq", DLQName),
 	)
 
 	return p, nil
 }
 
-// declareTopology объявляет exchange, очередь и биндинг.
-// При разрыве связи amqp091-go автоматически выполнит эти же
-// объявления на восстановленном канале.
+// declareTopology объявляет топологию через общий Declare.
 func (p *Publisher) declareTopology() error {
-	// 1. Exchange
-	if err := p.channel.ExchangeDeclare(
-		ExchangeName,
-		ExchangeType,
-		true, false, false, false, nil,
-	); err != nil {
-		return fmt.Errorf("declare exchange %s: %w", ExchangeName, err)
-	}
-
-	// 2. Queue
-	if _, err := p.channel.QueueDeclare(
-		ThumbnailQueueName,
-		true, false, false, false, nil,
-	); err != nil {
-		return fmt.Errorf("declare queue %s: %w", ThumbnailQueueName, err)
-	}
-
-	// 3. Binding
-	if err := p.channel.QueueBind(
-		ThumbnailQueueName,
-		UploadRoutingKey,
-		ExchangeName,
-		false,
-		nil,
-	); err != nil {
-		return fmt.Errorf("bind queue %s: %w", ThumbnailQueueName, err)
-	}
-
-	return nil
+	return Declare(p.channel)
 }
 
 // PublishUploadEvent публикует событие о загрузке аватарки.
@@ -123,8 +99,8 @@ func (p *Publisher) PublishUploadEvent(ctx context.Context, event domain.AvatarU
 		ctx,
 		ExchangeName,
 		UploadRoutingKey,
-		false, // mandatory
-		false, // immediate
+		false,
+		false,
 		amqp.Publishing{
 			ContentType:  "application/json",
 			DeliveryMode: amqp.Persistent,
@@ -141,7 +117,7 @@ func (p *Publisher) PublishUploadEvent(ctx context.Context, event domain.AvatarU
 	return nil
 }
 
-// Ping проверяет, что соединение живо. Используется в health-check.
+// Ping проверяет, что соединение живо; используется в health-check.
 func (p *Publisher) Ping(ctx context.Context) error {
 	p.mu.Lock()
 	conn := p.conn
@@ -153,7 +129,7 @@ func (p *Publisher) Ping(ctx context.Context) error {
 	return nil
 }
 
-// Close закрывает канал и соединение.
+// Close закрывает канал и соединение; ошибки объединяются через errors.Join.
 func (p *Publisher) Close() error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -169,6 +145,8 @@ func (p *Publisher) Close() error {
 		if err := p.conn.Close(); err != nil && err != amqp.ErrClosed {
 			if firstErr == nil {
 				firstErr = fmt.Errorf("close connection: %w", err)
+			} else {
+				firstErr = errors.Join(firstErr, fmt.Errorf("close connection: %w", err))
 			}
 		}
 		p.conn = nil
