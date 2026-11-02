@@ -24,6 +24,7 @@ type Config struct {
 	Postgres        PostgresConfig
 	S3              S3Config
 	RabbitMQ        RabbitMQConfig
+	Worker          WorkerConfig
 }
 
 // Load — загружает конфигурацию из переменных окружения.
@@ -235,4 +236,17 @@ func (c RabbitMQConfig) URLRedacted() string {
 
 	// Собираем вручную: scheme://username:***@host/path
 	return fmt.Sprintf("%s://%s:***@%s%s", u.Scheme, u.User.Username(), u.Host, u.Path)
+}
+
+// --------------------------------------
+// WorkerConfig — конфигурация воркера (retry-политика фоновой обработки).
+// --------------------------------------
+
+type WorkerConfig struct {
+	// RetryMaxAttempts — сколько всего попыток сделать (1 = без retry).
+	RetryMaxAttempts int `env:"WORKER_RETRY_MAX_ATTEMPTS" envDefault:"3" validate:"gte=1"`
+	// RetryInitialBackoff — задержка перед 2-й попыткой.
+	RetryInitialBackoff time.Duration `env:"WORKER_RETRY_INITIAL_BACKOFF" envDefault:"2s" validate:"gt=0"`
+	// RetryMultiplier — множитель backoff (2.0 = 2s → 4s → 8s).
+	RetryMultiplier float64 `env:"WORKER_RETRY_MULTIPLIER" envDefault:"2.0" validate:"gte=1"`
 }

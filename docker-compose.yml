@@ -143,6 +143,11 @@ services:
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: "5672"
       RABBITMQ_VHOST: ${RABBITMQ_VHOST:-/}
+
+      # Worker retry
+      WORKER_RETRY_MAX_ATTEMPTS: ${WORKER_RETRY_MAX_ATTEMPTS:-3}
+      WORKER_RETRY_INITIAL_BACKOFF: ${WORKER_RETRY_INITIAL_BACKOFF:-2s}
+      WORKER_RETRY_MULTIPLIER: ${WORKER_RETRY_MULTIPLIER:-2.0}
     depends_on:
       postgres:
         condition: service_healthy

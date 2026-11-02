@@ -44,7 +44,7 @@ func NewWorker(cfg *config.Config, logger *zap.Logger) (*WorkerApp, error) {
 	}
 
 	repo := avatarrepo.NewAvatarRepository(pgPool)
-	handler := worker.NewThumbnailHandler(repo, storage, logger)
+	handler := worker.NewThumbnailHandler(repo, storage, logger, cfg.Worker)
 
 	return &WorkerApp{
 		cfg:      cfg,
