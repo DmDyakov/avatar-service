@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"avatar-service/internal/domain"
 	"avatar-service/internal/services/avatar/mocks"
@@ -320,6 +321,50 @@ func TestService_GetUserAvatar(t *testing.T) {
 		_, _, err := svc.GetUserAvatar(context.Background(), "user-123")
 		assert.ErrorIs(t, err, domain.ErrStorageUnavailable)
 		assert.NotErrorIs(t, err, domain.ErrNotFound)
+	})
+}
+
+func TestService_ListByUserID(t *testing.T) {
+	t.Run("success with avatars", func(t *testing.T) {
+		mockRepo, _, _, svc := setupTest(t)
+
+		expected := []*domain.Avatar{
+			{ID: "avatar-1", UserID: "user-123", CreatedAt: time.Now()},
+			{ID: "avatar-2", UserID: "user-123", CreatedAt: time.Now().Add(-time.Hour)},
+		}
+		mockRepo.EXPECT().
+			ListByUserID(gomock.Any(), "user-123").
+			Return(expected, nil)
+
+		got, err := svc.ListByUserID(context.Background(), "user-123")
+		require.NoError(t, err)
+		assert.Len(t, got, 2)
+		assert.Equal(t, expected, got)
+	})
+
+	t.Run("nil from repo -> empty slice, not nil", func(t *testing.T) {
+		mockRepo, _, _, svc := setupTest(t)
+
+		// Репозиторий вернул nil (нет записей) — сервис должен нормализовать в [].
+		mockRepo.EXPECT().
+			ListByUserID(gomock.Any(), "no-avatars-user").
+			Return(nil, nil)
+
+		got, err := svc.ListByUserID(context.Background(), "no-avatars-user")
+		require.NoError(t, err)
+		assert.NotNil(t, got, "сервис должен вернуть пустой слайс, не nil (иначе JSON = null)")
+		assert.Empty(t, got)
+	})
+
+	t.Run("repo error", func(t *testing.T) {
+		mockRepo, _, _, svc := setupTest(t)
+
+		mockRepo.EXPECT().
+			ListByUserID(gomock.Any(), "user-123").
+			Return(nil, domain.ErrInvalidInput)
+
+		_, err := svc.ListByUserID(context.Background(), "user-123")
+		assert.ErrorIs(t, err, domain.ErrInvalidInput)
 	})
 }
 

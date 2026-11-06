@@ -33,6 +33,7 @@ func setupTest(t *testing.T) (*mocks.MockAvatarService, http.Handler) {
 	router.Get("/api/v1/avatars/{id}", handler.Get)
 	router.Get("/api/v1/avatars/{id}/metadata", handler.GetMetadata)
 	router.Get("/api/v1/users/{user_id}/avatar", handler.GetUserAvatar)
+	router.Get("/api/v1/users/{user_id}/avatars", handler.ListByUserID)
 
 	return mockSvc, router
 }
@@ -384,5 +385,64 @@ func TestAvatarHandler_GetMetadata(t *testing.T) {
 		thumbs, ok := resp["thumbnails"].([]any)
 		require.True(t, ok, "thumbnails должен быть массивом, не null")
 		assert.Empty(t, thumbs)
+	})
+}
+
+func TestAvatarHandler_ListByUserID(t *testing.T) {
+	t.Run("success - array of avatars", func(t *testing.T) {
+		mockSvc, router := setupTest(t)
+
+		avatars := []*domain.Avatar{
+			{ID: "avatar-1", UserID: "user-123", SizeBytes: 100},
+			{ID: "avatar-2", UserID: "user-123", SizeBytes: 200},
+		}
+		mockSvc.EXPECT().
+			ListByUserID(gomock.Any(), "user-123").
+			Return(avatars, nil)
+
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/users/user-123/avatars", nil)
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusOK, rec.Code)
+		assert.Equal(t, "application/json", rec.Header().Get("Content-Type"))
+
+		var resp []map[string]any
+		require.NoError(t, json.NewDecoder(rec.Body).Decode(&resp))
+		require.Len(t, resp, 2)
+		assert.Equal(t, "avatar-1", resp[0]["id"])
+		assert.Equal(t, "avatar-2", resp[1]["id"])
+	})
+
+	t.Run("empty list -> 200 with [] not null", func(t *testing.T) {
+		mockSvc, router := setupTest(t)
+
+		mockSvc.EXPECT().
+			ListByUserID(gomock.Any(), "no-avatars").
+			Return([]*domain.Avatar{}, nil)
+
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/users/no-avatars/avatars", nil)
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusOK, rec.Code)
+
+		body := strings.TrimSpace(rec.Body.String())
+		assert.Equal(t, "[]", body, "пустой список должен быть [], не null")
+
+		var resp []any
+		require.NoError(t, json.Unmarshal([]byte(body), &resp))
+		assert.Empty(t, resp)
+	})
+
+	t.Run("invalid user_id -> 400", func(t *testing.T) {
+		_, router := setupTest(t)
+
+		req := httptest.NewRequest(http.MethodGet,
+			"/api/v1/users/..%2F..%2Fetc%2Fpasswd/avatars", nil)
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusBadRequest, rec.Code)
 	})
 }
