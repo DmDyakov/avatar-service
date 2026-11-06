@@ -28,6 +28,7 @@ type AvatarService interface {
 	Upload(ctx context.Context, userID string, file multipart.File, header *multipart.FileHeader) (*domain.Avatar, error)
 	GetByID(ctx context.Context, id string) (*domain.Avatar, io.ReadCloser, error)
 	GetUserAvatar(ctx context.Context, userID string) (*domain.Avatar, io.ReadCloser, error)
+	GetMetadata(ctx context.Context, id string) (*domain.Avatar, error) // ← добавили
 }
 
 type AvatarHandler struct {
@@ -147,6 +148,23 @@ func (h *AvatarHandler) GetUserAvatar(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.streamAvatar(w, avatar, reader)
+}
+
+// GetMetadata обрабатывает GET /api/v1/avatars/{id}/metadata
+func (h *AvatarHandler) GetMetadata(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if id == "" {
+		handlers.RespondError(w, http.StatusBadRequest, "id is required")
+		return
+	}
+
+	avatar, err := h.service.GetMetadata(r.Context(), id)
+	if err != nil {
+		h.handleError(w, err)
+		return
+	}
+
+	handlers.RespondJSON(w, http.StatusOK, toMetadataResponse(avatar))
 }
 
 // streamAvatar отдаёт файл аватарки в response.

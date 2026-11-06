@@ -59,6 +59,21 @@ func (mr *MockAvatarServiceMockRecorder) GetByID(ctx, id any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetByID", reflect.TypeOf((*MockAvatarService)(nil).GetByID), ctx, id)
 }
 
+// GetMetadata mocks base method.
+func (m *MockAvatarService) GetMetadata(ctx context.Context, id string) (*domain.Avatar, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetMetadata", ctx, id)
+	ret0, _ := ret[0].(*domain.Avatar)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetMetadata indicates an expected call of GetMetadata.
+func (mr *MockAvatarServiceMockRecorder) GetMetadata(ctx, id any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetMetadata", reflect.TypeOf((*MockAvatarService)(nil).GetMetadata), ctx, id)
+}
+
 // GetUserAvatar mocks base method.
 func (m *MockAvatarService) GetUserAvatar(ctx context.Context, userID string) (*domain.Avatar, io.ReadCloser, error) {
 	m.ctrl.T.Helper()

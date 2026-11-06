@@ -25,9 +25,10 @@ type HealthHandler interface {
 
 type AvatarHandler interface {
 	Upload(w http.ResponseWriter, r *http.Request)
-	PostUpload(w http.ResponseWriter, r *http.Request)
 	Get(w http.ResponseWriter, r *http.Request)
 	GetUserAvatar(w http.ResponseWriter, r *http.Request)
+	GetMetadata(w http.ResponseWriter, r *http.Request)
+	PostUpload(w http.ResponseWriter, r *http.Request)
 }
 
 func New(
@@ -54,6 +55,7 @@ func New(
 	r.Route("/api/v1", func(r chi.Router) {
 		r.Post("/avatars", avatarHandler.Upload)
 		r.Get("/avatars/{id}", avatarHandler.Get)
+		r.Get("/avatars/{id}/metadata", avatarHandler.GetMetadata)
 		r.Get("/users/{user_id}/avatar", avatarHandler.GetUserAvatar)
 	})
 

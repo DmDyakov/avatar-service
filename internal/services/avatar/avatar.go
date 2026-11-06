@@ -137,14 +137,17 @@ func (s *Service) GetByID(
 }
 
 // GetUserAvatar возвращает текущую аватарку пользователя и поток её файла.
-//
-// «Текущая» = последняя по created_at DESC (делает репозиторий).
 func (s *Service) GetUserAvatar(
 	ctx context.Context,
 	userID string,
 ) (*domain.Avatar, io.ReadCloser, error) {
 	avatar, err := s.avatarRepo.GetUserAvatar(ctx, userID)
 	return s.fetchAvatar(ctx, avatar, err)
+}
+
+// GetMetadata возвращает метаданные аватарки по ID.
+func (s *Service) GetMetadata(ctx context.Context, id string) (*domain.Avatar, error) {
+	return s.avatarRepo.GetByID(ctx, id)
 }
 
 // fetchAvatar скачивает файл аватарки из storage по S3Key и возвращает поток.
