@@ -31,6 +31,7 @@ func setupTest(t *testing.T) (*mocks.MockAvatarService, http.Handler) {
 	router := chi.NewRouter()
 	router.Post("/api/v1/avatars", handler.Upload)
 	router.Get("/api/v1/avatars/{id}", handler.Get)
+	router.Get("/api/v1/avatars/{id}/metadata", handler.GetMetadata)
 	router.Get("/api/v1/users/{user_id}/avatar", handler.GetUserAvatar)
 
 	return mockSvc, router
@@ -289,5 +290,99 @@ func TestAvatarHandler_GetUserAvatar(t *testing.T) {
 		router.ServeHTTP(rec, req)
 
 		assert.Equal(t, http.StatusBadRequest, rec.Code)
+	})
+}
+
+func TestAvatarHandler_GetMetadata(t *testing.T) {
+	t.Run("success - JSON per TZ", func(t *testing.T) {
+		mockSvc, router := setupTest(t)
+
+		width, height := 540, 360
+		avatar := &domain.Avatar{
+			ID:        "avatar-1",
+			UserID:    "user-123",
+			FileName:  "avatar.jpg",
+			MimeType:  "image/jpeg",
+			SizeBytes: 42379,
+			Width:     &width,
+			Height:    &height,
+			ThumbnailS3Keys: map[string]string{
+				"100x100": "thumbnails/avatar-1/100x100.jpg",
+				"300x300": "thumbnails/avatar-1/300x300.jpg",
+			},
+		}
+		mockSvc.EXPECT().
+			GetMetadata(gomock.Any(), "avatar-1").
+			Return(avatar, nil)
+
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/avatars/avatar-1/metadata", nil)
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusOK, rec.Code)
+		assert.Equal(t, "application/json", rec.Header().Get("Content-Type"))
+
+		var resp map[string]any
+		require.NoError(t, json.NewDecoder(rec.Body).Decode(&resp))
+
+		// Контракт ТЗ п. 1.4: size (не size_bytes), dimensions, thumbnails
+		assert.Equal(t, float64(42379), resp["size"])
+		assert.NotContains(t, resp, "size_bytes", "по контракту ТЗ — size, не size_bytes")
+
+		dims, ok := resp["dimensions"].(map[string]any)
+		require.True(t, ok)
+		assert.Equal(t, float64(540), dims["width"])
+		assert.Equal(t, float64(360), dims["height"])
+
+		thumbs, ok := resp["thumbnails"].([]any)
+		require.True(t, ok)
+		require.Len(t, thumbs, 2)
+	})
+
+	t.Run("not found - 404", func(t *testing.T) {
+		mockSvc, router := setupTest(t)
+
+		mockSvc.EXPECT().
+			GetMetadata(gomock.Any(), "unknown").
+			Return(nil, domain.ErrNotFound)
+
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/avatars/unknown/metadata", nil)
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusNotFound, rec.Code)
+
+		var resp map[string]string
+		require.NoError(t, json.NewDecoder(rec.Body).Decode(&resp))
+		assert.Equal(t, "Avatar not found", resp["error"])
+	})
+
+	t.Run("empty thumbnails -> [] not null", func(t *testing.T) {
+		mockSvc, router := setupTest(t)
+
+		avatar := &domain.Avatar{
+			ID:              "avatar-2",
+			UserID:          "user-123",
+			FileName:        "avatar.jpg",
+			MimeType:        "image/jpeg",
+			SizeBytes:       100,
+			ThumbnailS3Keys: nil,
+		}
+		mockSvc.EXPECT().
+			GetMetadata(gomock.Any(), "avatar-2").
+			Return(avatar, nil)
+
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/avatars/avatar-2/metadata", nil)
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusOK, rec.Code)
+
+		var resp map[string]any
+		require.NoError(t, json.NewDecoder(rec.Body).Decode(&resp))
+
+		thumbs, ok := resp["thumbnails"].([]any)
+		require.True(t, ok, "thumbnails должен быть массивом, не null")
+		assert.Empty(t, thumbs)
 	})
 }
