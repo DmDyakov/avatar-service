@@ -28,6 +28,7 @@ type AvatarHandler interface {
 	Get(w http.ResponseWriter, r *http.Request)
 	GetUserAvatar(w http.ResponseWriter, r *http.Request)
 	GetMetadata(w http.ResponseWriter, r *http.Request)
+	ListByUserID(w http.ResponseWriter, r *http.Request)
 	PostUpload(w http.ResponseWriter, r *http.Request)
 }
 
@@ -57,6 +58,7 @@ func New(
 		r.Get("/avatars/{id}", avatarHandler.Get)
 		r.Get("/avatars/{id}/metadata", avatarHandler.GetMetadata)
 		r.Get("/users/{user_id}/avatar", avatarHandler.GetUserAvatar)
+		r.Get("/users/{user_id}/avatars", avatarHandler.ListByUserID)
 	})
 
 	srv := &http.Server{

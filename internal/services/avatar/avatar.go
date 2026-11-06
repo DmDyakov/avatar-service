@@ -26,6 +26,7 @@ type AvatarRepository interface {
 	Create(ctx context.Context, avatar *domain.Avatar) error
 	GetByID(ctx context.Context, id string) (*domain.Avatar, error)
 	GetUserAvatar(ctx context.Context, userID string) (*domain.Avatar, error)
+	ListByUserID(ctx context.Context, userID string) ([]*domain.Avatar, error)
 }
 
 //go:generate mockgen -destination=mocks/mock_storage.go -package=mocks avatar-service/internal/services/avatar Storage
@@ -171,6 +172,21 @@ func (s *Service) fetchAvatar(
 	}
 
 	return avatar, reader, nil
+}
+
+// ListByUserID возвращает все аватарки пользователя.
+func (s *Service) ListByUserID(
+	ctx context.Context,
+	userID string,
+) ([]*domain.Avatar, error) {
+	avatars, err := s.avatarRepo.ListByUserID(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	if avatars == nil {
+		return []*domain.Avatar{}, nil
+	}
+	return avatars, nil
 }
 
 // decodeDimensions читает width/height из заголовка изображения.

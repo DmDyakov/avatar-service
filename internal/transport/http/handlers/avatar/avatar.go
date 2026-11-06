@@ -28,7 +28,8 @@ type AvatarService interface {
 	Upload(ctx context.Context, userID string, file multipart.File, header *multipart.FileHeader) (*domain.Avatar, error)
 	GetByID(ctx context.Context, id string) (*domain.Avatar, io.ReadCloser, error)
 	GetUserAvatar(ctx context.Context, userID string) (*domain.Avatar, io.ReadCloser, error)
-	GetMetadata(ctx context.Context, id string) (*domain.Avatar, error) // ← добавили
+	GetMetadata(ctx context.Context, id string) (*domain.Avatar, error)
+	ListByUserID(ctx context.Context, userID string) ([]*domain.Avatar, error)
 }
 
 type AvatarHandler struct {
@@ -76,7 +77,7 @@ func (h *AvatarHandler) Upload(w http.ResponseWriter, r *http.Request) {
 	handlers.RespondJSON(w, http.StatusCreated, avatar)
 }
 
-// PostUpload обрабатывает POST /web/upload (AS-111).
+// PostUpload обрабатывает POST /web/upload.
 //
 // Гибридный вариант: форма отправляется нативно (если JS отключён),
 // сервер делает 303 See Other на галерею. Если JS работает,
@@ -165,6 +166,23 @@ func (h *AvatarHandler) GetMetadata(w http.ResponseWriter, r *http.Request) {
 	}
 
 	handlers.RespondJSON(w, http.StatusOK, toMetadataResponse(avatar))
+}
+
+// ListByUserID обрабатывает GET /api/v1/users/{user_id}/avatars.
+func (h *AvatarHandler) ListByUserID(w http.ResponseWriter, r *http.Request) {
+	userID := chi.URLParam(r, "user_id")
+	if err := validateUserID(userID); err != nil {
+		handlers.RespondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	avatars, err := h.service.ListByUserID(r.Context(), userID)
+	if err != nil {
+		h.handleError(w, err)
+		return
+	}
+
+	handlers.RespondJSON(w, http.StatusOK, avatars)
 }
 
 // streamAvatar отдаёт файл аватарки в response.
