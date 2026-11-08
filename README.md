@@ -1,209 +1,124 @@
 # Avatar Service
 
-Микросервис для управления аватарками пользователей. Принимает изображения, хранит их в S3, генерирует миниатюры в фоне и отдаёт по REST API.
+Сервис аватарок: принимает картинки, складывает в S3, в фоне режет миниатюры и отдаёт всё это по HTTP. Сделан под GophProfile — чтобы сторонние сервисы могли получать аватар пользователя по email.
 
 ## Стек
 
-- Go 1.21+ (сборка на 1.27)
-- PostgreSQL 16 — метаданные
-- MinIO (S3) — файлы
-- RabbitMQ — очередь задач для воркера
-- chi — HTTP-роутер
-- zap — логирование
-- golang-migrate — миграции
-- OpenAPI 3.0 — спецификация API
+Go 1.27, PostgreSQL 16 (метаданные), MinIO/S3 (файлы), RabbitMQ (очередь для воркера), chi (роутер), zap (логи), golang-migrate (миграции). Контракты API — OpenAPI 3.0, смотреть через Swagger UI.
 
-## Быстрый старт
+## Запуск
 
-Скопируйте `.env.example` в `.env`:
+Перед первым стартом — скопировать шаблон конфига:
 
 ```
 cp .env.example .env
 ```
 
-Дальше два варианта — для разработки и для проверки в Docker.
+Дальше два пути — локально или всё в Docker.
 
-### Разработка (приложение на хосте)
+### Локально
 
-Инфраструктура поднимается в Docker, приложение запускается локально. Так быстрее итерировать: не нужно пересобирать образ после каждой правки.
+Инфраструктуру (БД, хранилище, брокер) держим в Docker, а приложение запускаем на хосте. Так итерировать быстрее: `go run` не требует пересборки образа.
 
-В трёх терминалах:
+Три терминала:
 
 ```
 make infra-up    # postgres, minio, rabbitmq
-make run         # HTTP-сервер на :8080
-make worker      # воркер обработки изображений
+make run         # сервер на :8080
+make worker      # воркер миниатюр
 ```
 
-Проверить, что сервер поднялся:
+Сервер отвечает на `/live` и `/ready`, форма загрузки — по адресу `http://localhost:8080/web/upload`. Когда надоест — `make infra-down`, данные в volumes останутся.
+
+### Всё в Docker
+
+Один заход, всё сразу:
 
 ```
-curl http://localhost:8080/live
-curl http://localhost:8080/ready
+docker compose up -d --build
+docker compose logs -f server worker
 ```
 
-Открыть форму загрузки в браузере:
+`down` останавливает контейнеры, `down -v` — плюс сносит данные (Postgres, MinIO, RabbitMQ). `-v` необратимый, если что.
+
+## API
+
+Контракты — в [`internal/api/openapi.yaml`](internal/api/openapi.yaml). Удобнее смотреть через Swagger UI:
+
+```
+make openapi-ui
+# http://localhost:8081
+```
+
+Там все эндпоинты с кодами ответов, схемами и примерами. Нереализованные помечены `❌` в названии — сразу видно, что «уже работает», а что «ещё в планах».
+
+## Веб-интерфейс
+
+Две HTML-страницы в `web/static/`: форма загрузки и (в будущем) галерея. Ванильный JS + Tailwind через CDN — без сборки, `node_modules` и Node в CI.
 
 ```
 http://localhost:8080/web/upload
 ```
 
-Остановить инфраструктуру (данные сохраняются):
+Форма умеет два режима. С включённым JS — `fetch` к `/api/v1/avatars`, превью под формой без перезагрузки. Без JS — нативный submit на `POST /web/upload`, сервер редиректит на галерею (PRG). Второй режим не декоративный: если скрипт не загрузился или его отключили, форма всё равно работает.
+
+Галерея (`/web/gallery/{user_id}`) — в работе, задача AS-204. Пока ссылка из формы ведёт на 404.
+
+## OpenAPI и Swagger UI
+
+Спека лежит в репозитории как документ — не раздаётся сервером (это задача Phase 2).
 
 ```
-make infra-down
+make openapi-validate   # проверить, что YAML валиден
+make openapi-ui         # поднять Swagger UI на :8081
 ```
 
-### Всё в Docker
-
-Когда нужно проверить, что образ собирается и сервисы работают вместе:
-
-```
-docker compose up -d --build
-curl http://localhost:8080/live
-docker compose down
-```
-
-`docker compose down` останавливает контейнеры, но данные (Postgres, MinIO, RabbitMQ) сохраняются в volumes. Если нужно сбросить всё до чистого состояния — `docker compose down -v`. Внимание: `-v` удаляет данные безвозвратно.
-
-Логи приложения в Docker:
-
-```
-docker compose logs -f server worker
-```
-
-## API
-
-| Метод | Endpoint | Описание | Статус |
-|-------|----------|----------|--------|
-| POST | `/api/v1/avatars` | Загрузить аватарку | ✅ Sprint 1 |
-| GET | `/api/v1/avatars/{id}` | Получить файл | ✅ Sprint 1 |
-| GET | `/api/v1/users/{user_id}/avatar` | Текущая аватарка пользователя | ✅ Sprint 1 |
-| GET | `/live` | Liveness | ✅ Sprint 1 |
-| GET | `/ready` | Readiness (зависимости) | ✅ Sprint 1 |
-| GET | `/health` | Алиас `/ready` | ✅ Sprint 1 |
-| GET | `/web/upload` | HTML-форма загрузки | ✅ Sprint 1 |
-| POST | `/web/upload` | Обработка формы (нативный submit) | ✅ Sprint 1 |
-| GET | `/api/v1/avatars/{id}/metadata` | Метаданные | ⏳ Sprint 2 (AS-204) |
-| GET | `/api/v1/users/{user_id}/avatars` | Все аватарки пользователя | ⏳ Sprint 2 (AS-205) |
-| GET | `/web/gallery/{user_id}` | Галерея аватарок | ⏳ Sprint 2 (AS-206) |
-| DELETE | `/api/v1/avatars/{id}` | Удалить | ⏳ Sprint 3 (AS-301) |
-
-### Загрузка через API
-
-```
-curl -X POST http://localhost:8080/api/v1/avatars \
-  -H "X-User-ID: user-123" \
-  -F "file=@avatar.jpg"
-```
-
-```json
-{
-  "id": "84fac931-...",
-  "user_id": "user-123",
-  "file_name": "avatar.jpg",
-  "mime_type": "image/jpeg",
-  "size_bytes": 42379,
-  "s3_key": "avatars/user-123/84fac931-...",
-  "width": 540,
-  "height": 360,
-  "upload_status": "uploaded",
-  "processing_status": "pending",
-  "attempts": 0,
-  "created_at": "2026-09-18T12:00:00Z",
-  "updated_at": "2026-09-18T12:00:00Z"
-}
-```
-
-`width`/`height` заполняются при upload (`image.DecodeConfig`). `processing_status: pending` — задача на миниатюры в очереди (воркер — Sprint 2).
-
-### Readiness
-
-```
-curl http://localhost:8080/ready
-```
-
-```json
-{
-  "status": "ok",
-  "components": {
-    "postgres": "ok",
-    "storage": "ok",
-    "rabbitmq": "ok"
-  }
-}
-```
-
-## OpenAPI
-
-Спецификация всех эндпоинтов — в [`internal/api/openapi.yaml`](internal/api/openapi.yaml). Описывает контракты (методы, коды, схемы, заголовки), включая запланированные на Sprint 2–3 (`x-status: planned`).
-
-**Проверить спеку:**
-
-```
-make openapi-validate
-```
-
-**Посмотреть в Swagger UI:**
-
-```
-make openapi-ui
-# открыть http://localhost:8081
-```
-
-Спека не раздаётся API-сервером — это документ для команды и внешних потребителей. Раздача `GET /openapi.yaml` — Phase 2 (AS-1103).
+При изменении API правьте `openapi.yaml` в том же коммите, что и код. `make check` включает `openapi-validate` — сломанную спеку не пропустит.
 
 ## Конфигурация
 
-Все переменные описаны в `.env.example`. Основные:
+Все переменные, их дефолты и пометки «только для dev» / «для прода» — в [`.env.example`](.env.example). Копируется в `.env` перед запуском.
 
-| Переменная | По умолчанию | Описание |
-|-----------|-------------|----------|
-| `APP_ENV` | `dev` | `dev`, `staging` или `prod` |
-| `HTTP_ADDRESS` | `:8080` | адрес HTTP-сервера |
-| `POSTGRES_HOST` | `localhost` | хост Postgres (в Docker — `postgres`) |
-| `POSTGRES_PORT` | `5432` | порт Postgres |
-| `S3_ENDPOINT` | `localhost:9000` | адрес S3 |
-| `S3_BUCKET` | `avatars` | бакет для файлов |
-| `S3_FORCE_PATH_STYLE` | `false` | `true` для MinIO, `false` для AWS |
-| `RABBITMQ_HOST` | `localhost` | хост RabbitMQ (в Docker — `rabbitmq`) |
-| `RABBITMQ_PREFETCH` | `10` | сколько задач воркер держит одновременно |
+Секреты (`POSTGRES_PASSWORD`, `S3_ACCESS_KEY`, `S3_SECRET_KEY`, `RABBITMQ_PASSWORD`) — `required`, без дефолтов. Не задали — приложение падает на старте с внятной ошибкой. Это лучше, чем тихо подняться с паролем `postgres` и потом гадать, почему в проде дыра.
 
-DSN для Postgres и URL для RabbitMQ собираются в коде из отдельных полей (`config.PostgresConfig.DSN()` и `config.RabbitMQConfig.URL()`). Отдельных переменных `POSTGRES_DSN` и `RABBITMQ_URL` нет — это сделано, чтобы приложение и docker-compose использовали одни и те же значения без дублирования.
+DSN для Postgres и AMQP URL собираются в коде из отдельных полей (`config.PostgresConfig.DSN()`, `config.RabbitMQConfig.URL()`), а не из готовых строк. Так пароль с `@` или `:` не ломает парсинг URL, и compose с приложением используют одни и те же значения.
 
 ## Структура
 
 ```
-cmd/                — точки входа (server, worker)
+cmd/                — main для server и worker
 internal/
 ├── api/            — OpenAPI-спецификация
-├── app/            — сборка зависимостей
-├── broker/         — RabbitMQ (клиент, publisher, топология)
-├── config/         — конфигурация
+├── app/            — сборка зависимостей: App (server), WorkerApp
+├── broker/         — RabbitMQ: client, publisher, consumer, topology
+├── config/         — конфигурация из env
 ├── domain/         — сущности и контракты
-├── logger/         — обёртка над zap
-├── repository/     — PostgreSQL (пул, миграции, репозитории)
-├── services/       — бизнес-логика
-├── storage/        — MinIO (S3)
-└── transport/      — HTTP (сервер, хендлеры, middleware)
-migrations/         — SQL-миграции (встроены в бинарник)
-web/                — веб-интерфейс (HTML-форма)
-tests/              — E2E-тесты и фикстуры
+├── logger/         — zap с dev/prod форматом
+├── repository/     — PostgreSQL: пул, миграции, репозитории
+├── services/       — бизнес-логика server
+├── storage/        — MinIO/S3
+├── transport/      — HTTP: сервер, хендлеры, middleware
+└── worker/         — бизнес-логика worker (thumbnail handler)
+migrations/         — SQL-миграции (встроены в бинарник через go:embed)
+web/                — веб-интерфейс
+tests/              — e2e и фикстуры
 ```
 
 ## Команды
 
 ```
-make help              # список всех команд
-make run               # сервер
-make worker            # воркер
-make test              # тесты
+make help              # список всех команд с описаниями
+make run               # сервер локально
+make worker            # воркер локально
+make test              # все тесты (testcontainers поднимает PG, MinIO, RabbitMQ)
+make test-cover        # покрытие + падение при <50%
 make lint              # golangci-lint
+make check             # lint + coverage + openapi — то, что гоняем перед PR
 make infra-up          # postgres + minio + rabbitmq
-make infra-down        # остановить инфраструктуру
-make docker-up         # всё в Docker
-make docker-down       # остановить Docker
-make openapi-validate  # проверить OpenAPI-спеку
+make infra-down        # остановить инфраструктуру (данные останутся)
+make docker-up         # собрать и поднять всё в Docker
+make docker-down       # остановить
+make openapi-validate  # проверить спецификацию
 make openapi-ui        # Swagger UI на http://localhost:8081
 ```
 

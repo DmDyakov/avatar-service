@@ -7,9 +7,6 @@ info:
     Принимает изображения (JPEG, PNG, WebP до 10 MB), хранит их в S3,
     генерирует миниатюры в фоне через RabbitMQ + worker.
 
-    **Статусы эндпоинтов:**
-    - Без пометки — реализовано в Phase 1 (Sprint 1).
-    - `Planned for Sprint N` — зафиксировано в контракте, реализуется позже.
   version: 0.1.0-alpha.1
   contact:
     name: Avatar Service
@@ -130,13 +127,11 @@ paths:
           $ref: '#/components/responses/InternalError'
     delete:
       tags: [Avatars]
-      summary: Удалить аватарку по ID
+      summary: Удалить аватарку по ID (❌ не реализовано)
       description: |
-        Мягкое удаление (deleted_at в БД). Файл в S3 удаляется асинхронно
-        через очередь. **Planned for Sprint 3 (AS-301).**
+        Мягкое удаление (deleted_at в БД). Файл в S3 удаляется
+        асинхронно через очередь.
       operationId: deleteAvatarByID
-      x-status: planned
-      x-planned-sprint: 3
       parameters:
         - $ref: '#/components/parameters/AvatarID'
         - name: X-User-ID
@@ -166,10 +161,9 @@ paths:
       tags: [Avatars]
       summary: Метаданные аватарки
       description: |
-        JSON с размерами, MIME, списком миниатюр. **Planned for Sprint 2 (AS-204).**
+        JSON с размерами, MIME, списком миниатюр.
+        Поля: `size` (не `size_bytes`), `dimensions`, `thumbnails` (массив).
       operationId: getAvatarMetadata
-      x-status: planned
-      x-planned-sprint: 2
       parameters:
         - $ref: '#/components/parameters/AvatarID'
       responses:
@@ -213,12 +207,10 @@ paths:
           $ref: '#/components/responses/AvatarNotFound'
     delete:
       tags: [Users]
-      summary: Удалить текущую аватарку пользователя
+      summary: Удалить текущую аватарку пользователя (❌ не реализовано)
       description: |
-        **Planned for Sprint 3 (AS-303).**
+        Удаляет последнюю загруженную аватарку пользователя.
       operationId: deleteUserAvatar
-      x-status: planned
-      x-planned-sprint: 3
       parameters:
         - $ref: '#/components/parameters/UserID'
         - name: X-User-ID
@@ -243,10 +235,9 @@ paths:
       tags: [Users]
       summary: Список аватарок пользователя
       description: |
-        **Planned for Sprint 2 (AS-205).**
+        Аватарки пользователя, отсортированные по created_at DESC.
+        Мягко удалённые не попадают. Пустой список — `200 []` (не 404).
       operationId: listUserAvatars
-      x-status: planned
-      x-planned-sprint: 2
       parameters:
         - $ref: '#/components/parameters/UserID'
       responses:
@@ -377,7 +368,7 @@ components:
         example: 'public, max-age=86400'
 
     ETag:
-      description: Хеш содержимого (Planned for AS-602.3)
+      description: Хеш содержимого (не реализовано, появится позже)
       schema:
         type: string
         example: '"abc123def456"'
@@ -445,7 +436,7 @@ components:
           type: integer
           nullable: true
           description: |
-            Ширина оригинала. Заполняется при upload (image.DecodeConfig, AS-107.8).
+            Ширина оригинала. Заполняется при upload (image.DecodeConfig).
             null — ещё не декодировали (старая запись).
           example: 540
         height:
@@ -459,8 +450,8 @@ components:
           additionalProperties:
             type: string
           description: |
-            Ключи миниатюр: {"100x100": "thumbnails/{id}/100x100.jpg", "300x300": "..."}.
-            Заполняется воркером (AS-203). null — миниатюры ещё не сгенерированы.
+            Ключи миниатюр: {"100x100": "...", "300x300": "..."}.
+            Заполняется воркером после upload. null — миниатюры ещё не сгенерированы.
           example:
             '100x100': thumbnails/9264a253-178d-46e5-8f73-0c1a770f0da5/100x100.jpg
             '300x300': thumbnails/9264a253-178d-46e5-8f73-0c1a770f0da5/300x300.jpg
@@ -475,7 +466,9 @@ components:
         attempts:
           type: integer
           minimum: 0
-          description: Счётчик retry воркера (AS-202), увеличивается при ошибке.
+          description: |
+            Счётчик неудачных обработок. Увеличивается после исчерпания
+            retry (3 попытки с exponential backoff), не на каждой попытке.
           example: 0
         created_at:
           type: string
@@ -546,8 +539,9 @@ components:
     MetadataResponse:
       type: object
       description: |
-        Ответ GET /api/v1/avatars/{id}/metadata (AS-204).
-        Отличается от Avatar: содержит dimensions и thumbnails как массив.
+        Ответ GET /api/v1/avatars/{id}/metadata.
+        Отличается от Avatar: size (не size_bytes), dimensions,
+        thumbnails как массив [{size, url}].
       properties:
         id:
           type: string
