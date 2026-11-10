@@ -52,6 +52,11 @@ func New(
 	})
 	r.Post("/web/upload", avatarHandler.PostUpload)
 
+	// Web: галерея аватарок
+	r.Get("/web/gallery/{user_id}", func(w http.ResponseWriter, r *http.Request) {
+		http.ServeFile(w, r, "./web/static/gallery.html")
+	})
+
 	// Avatar API
 	r.Route("/api/v1", func(r chi.Router) {
 		r.Post("/avatars", avatarHandler.Upload)

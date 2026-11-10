@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>My Avatars</title>
+    <script src="https://cdn.tailwindcss.com/3.4.17"></script>
+  </head>
+  <body class="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900">
+    <div class="container mx-auto px-4 py-8 max-w-5xl">
+      <!-- Header -->
+      <div class="bg-white/10 backdrop-blur-lg rounded-2xl shadow-2xl border border-white/20 overflow-hidden mb-6">
+        <header class="bg-gradient-to-r from-purple-600 to-blue-600 p-6">
+          <div class="flex flex-col sm:flex-row items-center justify-between gap-4">
+            <div>
+              <h1 class="text-3xl font-bold text-white">My Avatars</h1>
+              <p class="text-white/80 mt-1">
+                User: <span id="userIdDisplay" class="font-mono">...</span>
+              </p>
+            </div>
+            <a href="/web/upload"
+               class="px-5 py-2.5 bg-white/20 hover:bg-white/30 text-white font-semibold rounded-lg transition-colors">
+              + Upload new
+            </a>
+          </div>
+        </header>
+      </div>
+      <!-- Loading -->
+      <div id="loading" class="text-center py-16">
+        <svg class="animate-spin h-10 w-10 text-purple-400 mx-auto"
+             xmlns="http://www.w3.org/2000/svg"
+             fill="none"
+             viewBox="0 0 24 24">
+          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+          <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z">
+          </path>
+        </svg>
+        <p class="text-white/60 mt-3">Loading avatars...</p>
+      </div>
+      <!-- Empty state -->
+      <div id="empty"
+           class="hidden text-center py-16 bg-white/5 backdrop-blur-lg rounded-2xl border border-white/10">
+        <div class="text-6xl mb-4">🖼️</div>
+        <h2 class="text-2xl font-semibold text-white mb-2">No avatars yet</h2>
+        <p class="text-white/60 mb-6">Upload your first avatar to see it here</p>
+        <a href="/web/upload"
+           class="inline-block px-6 py-3 bg-gradient-to-r from-purple-600 to-blue-600 text-white font-semibold rounded-lg shadow-lg hover:from-purple-700 hover:to-blue-700 transition-all">
+          Upload avatar
+        </a>
+      </div>
+      <!-- Error -->
+      <div id="error"
+           class="hidden bg-red-500/20 border border-red-500/50 text-red-200 px-6 py-4 rounded-lg">
+        <p class="font-semibold mb-1">Failed to load gallery</p>
+        <p id="errorMessage" class="text-sm text-red-200/80"></p>
+      </div>
+      <!-- Gallery grid -->
+      <div id="gallery"
+           class="hidden grid gap-4 grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
+        <!-- Cards injected by JS -->
+      </div>
+    </div>
+    <script>
+    // --- Извлекаем user_id из URL: /web/gallery/{user_id} ---
+    const pathParts = window.location.pathname.split('/').filter(Boolean);
+    const userId = pathParts[pathParts.length - 1];
+
+    const els = {
+      userIdDisplay: document.getElementById('userIdDisplay'),
+      loading: document.getElementById('loading'),
+      empty: document.getElementById('empty'),
+      error: document.getElementById('error'),
+      errorMessage: document.getElementById('errorMessage'),
+      gallery: document.getElementById('gallery'),
+    };
+
+    // --- Экранирование для безопасной вставки в innerHTML ---
+    function escapeHtml(s) {
+      const div = document.createElement('div');
+      div.textContent = s;
+      return div.innerHTML;
+    }
+
+    // --- Форматирование даты: ISO → "02.11.2026" ---
+    function formatDate(iso) {
+      try {
+        return new Date(iso).toLocaleDateString('ru-RU', {
+          day: '2-digit',
+          month: '2-digit',
+          year: 'numeric',
+        });
+      } catch {
+        return iso;
+      }
+    }
+
+    // --- Рендер карточки ---
+    // Используем оригинал (/api/v1/avatars/{id})
+    // Когда появится — заменить src на /api/v1/avatars/{id}?size=300x300.
+    function renderCard(avatar) {
+      const card = document.createElement('div');
+      card.className = 'bg-white/10 backdrop-blur-lg rounded-xl shadow-lg border border-white/20 overflow-hidden hover:border-purple-400/50 transition-colors';
+
+      const date = formatDate(avatar.created_at);
+      const mime = escapeHtml(avatar.mime_type || 'image');
+      const id = escapeHtml(avatar.id);
+
+      card.innerHTML = `
+        <div class="aspect-square overflow-hidden bg-black/20">
+          <img
+            src="/api/v1/avatars/${id}"
+            alt="Avatar"
+            loading="lazy"
+            class="w-full h-full object-cover"
+            onerror="this.parentElement.innerHTML='<div class=\\'flex items-center justify-center h-full text-white/40 text-sm\\'>Image not found</div>'">
+        </div>
+        <div class="p-3">
+          <p class="text-sm font-medium text-white truncate" title="${escapeHtml(avatar.file_name || '')}">
+            ${escapeHtml(avatar.file_name || 'avatar')}
+          </p>
+          <div class="flex items-center justify-between mt-1">
+            <p class="text-xs text-white/60">${date}</p>
+            <p class="text-xs text-white/40 font-mono uppercase">${mime.split('/')[1] || ''}</p>
+          </div>
+        </div>
+      `;
+
+      return card;
+    }
+
+    // --- Загрузка списка ---
+    async function loadGallery() {
+      if (!userId) {
+        els.loading.classList.add('hidden');
+        els.error.classList.remove('hidden');
+        els.errorMessage.textContent = 'No user ID in URL';
+        return;
+      }
+
+      els.userIdDisplay.textContent = userId;
+
+      try {
+        const res = await fetch(`/api/v1/users/${encodeURIComponent(userId)}/avatars`);
+
+        if (!res.ok) {
+          throw new Error(`HTTP ${res.status} ${res.statusText}`);
+        }
+
+        const avatars = await res.json();
+
+        els.loading.classList.add('hidden');
+
+        if (!Array.isArray(avatars) || avatars.length === 0) {
+          els.empty.classList.remove('hidden');
+          return;
+        }
+
+        els.gallery.classList.remove('hidden');
+        els.gallery.innerHTML = '';
+        avatars.forEach(a => els.gallery.appendChild(renderCard(a)));
+
+      } catch (err) {
+        els.loading.classList.add('hidden');
+        els.error.classList.remove('hidden');
+        els.errorMessage.textContent = err.message;
+      }
+    }
+
+    loadGallery();
+    </script>
+  </body>
+</html>
