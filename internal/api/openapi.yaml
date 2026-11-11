@@ -207,7 +207,7 @@ paths:
           $ref: '#/components/responses/AvatarNotFound'
     delete:
       tags: [Users]
-      summary: Удалить текущую аватарку пользователя (❌ не реализовано)
+      summary: Удалить текущую аватарку пользователя
       description: |
         Удаляет последнюю загруженную аватарку пользователя.
       operationId: deleteUserAvatar
