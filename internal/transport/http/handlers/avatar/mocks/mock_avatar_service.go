@@ -43,6 +43,20 @@ func (m *MockAvatarService) EXPECT() *MockAvatarServiceMockRecorder {
 	return m.recorder
 }
 
+// Delete mocks base method.
+func (m *MockAvatarService) Delete(ctx context.Context, id, userID string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Delete", ctx, id, userID)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// Delete indicates an expected call of Delete.
+func (mr *MockAvatarServiceMockRecorder) Delete(ctx, id, userID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Delete", reflect.TypeOf((*MockAvatarService)(nil).Delete), ctx, id, userID)
+}
+
 // GetByID mocks base method.
 func (m *MockAvatarService) GetByID(ctx context.Context, id string) (*domain.Avatar, io.ReadCloser, error) {
 	m.ctrl.T.Helper()

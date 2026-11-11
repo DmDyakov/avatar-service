@@ -155,3 +155,40 @@ func (p *Publisher) Close() error {
 	p.logger.Info("rabbitmq publisher closed")
 	return firstErr
 }
+
+// PublishDeleteEvent публикует событие об удалении аватарки.
+func (p *Publisher) PublishDeleteEvent(ctx context.Context, event domain.AvatarDeleteEvent) error {
+	body, err := json.Marshal(event)
+	if err != nil {
+		return fmt.Errorf("marshal event: %w", err)
+	}
+
+	p.mu.Lock()
+	ch := p.channel
+	p.mu.Unlock()
+
+	if ch == nil {
+		return fmt.Errorf("channel is not initialized")
+	}
+
+	err = ch.PublishWithContext(
+		ctx,
+		ExchangeName,
+		"avatar.delete.created",
+		false,
+		false,
+		amqp.Publishing{
+			ContentType:  "application/json",
+			DeliveryMode: amqp.Persistent,
+			Body:         body,
+			MessageId:    event.AvatarID,
+			Timestamp:    time.Now(),
+		},
+	)
+	if err != nil {
+		return fmt.Errorf("publish avatar.delete.created: %w", err)
+	}
+
+	p.logger.Debug("delete event published", zap.String("avatar_id", event.AvatarID))
+	return nil
+}

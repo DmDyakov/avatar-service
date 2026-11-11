@@ -29,6 +29,7 @@ type AvatarHandler interface {
 	GetUserAvatar(w http.ResponseWriter, r *http.Request)
 	GetMetadata(w http.ResponseWriter, r *http.Request)
 	ListByUserID(w http.ResponseWriter, r *http.Request)
+	Delete(w http.ResponseWriter, r *http.Request)
 	PostUpload(w http.ResponseWriter, r *http.Request)
 }
 
@@ -61,6 +62,7 @@ func New(
 	r.Route("/api/v1", func(r chi.Router) {
 		r.Post("/avatars", avatarHandler.Upload)
 		r.Get("/avatars/{id}", avatarHandler.Get)
+		r.Delete("/avatars/{id}", avatarHandler.Delete)
 		r.Get("/avatars/{id}/metadata", avatarHandler.GetMetadata)
 		r.Get("/users/{user_id}/avatar", avatarHandler.GetUserAvatar)
 		r.Get("/users/{user_id}/avatars", avatarHandler.ListByUserID)

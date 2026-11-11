@@ -99,3 +99,17 @@ func (mr *MockAvatarRepositoryMockRecorder) ListByUserID(ctx, userID any) *gomoc
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListByUserID", reflect.TypeOf((*MockAvatarRepository)(nil).ListByUserID), ctx, userID)
 }
+
+// SoftDelete mocks base method.
+func (m *MockAvatarRepository) SoftDelete(ctx context.Context, id string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "SoftDelete", ctx, id)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// SoftDelete indicates an expected call of SoftDelete.
+func (mr *MockAvatarRepositoryMockRecorder) SoftDelete(ctx, id any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SoftDelete", reflect.TypeOf((*MockAvatarRepository)(nil).SoftDelete), ctx, id)
+}

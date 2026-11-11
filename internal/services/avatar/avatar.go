@@ -27,6 +27,7 @@ type AvatarRepository interface {
 	GetByID(ctx context.Context, id string) (*domain.Avatar, error)
 	GetUserAvatar(ctx context.Context, userID string) (*domain.Avatar, error)
 	ListByUserID(ctx context.Context, userID string) ([]*domain.Avatar, error)
+	SoftDelete(ctx context.Context, id string) error
 }
 
 //go:generate mockgen -destination=mocks/mock_storage.go -package=mocks avatar-service/internal/services/avatar Storage
@@ -39,6 +40,7 @@ type Storage interface {
 //go:generate mockgen -destination=mocks/mock_event_publisher.go -package=mocks avatar-service/internal/services/avatar EventPublisher
 type EventPublisher interface {
 	PublishUploadEvent(ctx context.Context, event domain.AvatarUploadEvent) error
+	PublishDeleteEvent(ctx context.Context, event domain.AvatarDeleteEvent) error
 }
 
 // Service реализует бизнес-логику работы с аватарками.
@@ -187,6 +189,47 @@ func (s *Service) ListByUserID(
 		return []*domain.Avatar{}, nil
 	}
 	return avatars, nil
+}
+
+// Delete помечает аватарку удалённой и публикует событие на очистку S3 (AS-301.1).
+func (s *Service) Delete(
+	ctx context.Context,
+	id string,
+	userID string,
+) error {
+	avatar, err := s.avatarRepo.GetByID(ctx, id)
+	if err != nil {
+		return err
+	}
+
+	if avatar.UserID != userID {
+		return domain.ErrForbidden
+	}
+
+	if err := s.avatarRepo.SoftDelete(ctx, id); err != nil {
+		return err
+	}
+
+	s3Keys := make([]string, 0, 1+len(avatar.ThumbnailS3Keys))
+	s3Keys = append(s3Keys, avatar.S3Key)
+	for _, key := range avatar.ThumbnailS3Keys {
+		s3Keys = append(s3Keys, key)
+	}
+
+	event := domain.AvatarDeleteEvent{
+		AvatarID: avatar.ID,
+		S3Keys:   s3Keys,
+	}
+	if err := s.publishWithRetry(ctx, func() error {
+		return s.publisher.PublishDeleteEvent(ctx, event)
+	}); err != nil {
+		s.logger.Error("failed to publish delete event",
+			zap.String("avatar_id", avatar.ID),
+			zap.Error(err),
+		)
+	}
+
+	return nil
 }
 
 // decodeDimensions читает width/height из заголовка изображения.

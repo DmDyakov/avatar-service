@@ -30,6 +30,7 @@ type AvatarService interface {
 	GetUserAvatar(ctx context.Context, userID string) (*domain.Avatar, io.ReadCloser, error)
 	GetMetadata(ctx context.Context, id string) (*domain.Avatar, error)
 	ListByUserID(ctx context.Context, userID string) ([]*domain.Avatar, error)
+	Delete(ctx context.Context, id, userID string) error
 }
 
 type AvatarHandler struct {
@@ -183,6 +184,28 @@ func (h *AvatarHandler) ListByUserID(w http.ResponseWriter, r *http.Request) {
 	}
 
 	handlers.RespondJSON(w, http.StatusOK, avatars)
+}
+
+// Delete обрабатывает DELETE /api/v1/avatars/{id}
+func (h *AvatarHandler) Delete(w http.ResponseWriter, r *http.Request) {
+	userID := r.Header.Get("X-User-ID")
+	if err := validateUserID(userID); err != nil {
+		handlers.RespondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	id := chi.URLParam(r, "id")
+	if id == "" {
+		handlers.RespondError(w, http.StatusBadRequest, "id is required")
+		return
+	}
+
+	if err := h.service.Delete(r.Context(), id, userID); err != nil {
+		h.handleError(w, err)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // streamAvatar отдаёт файл аватарки в response.

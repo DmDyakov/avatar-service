@@ -41,6 +41,20 @@ func (m *MockEventPublisher) EXPECT() *MockEventPublisherMockRecorder {
 	return m.recorder
 }
 
+// PublishDeleteEvent mocks base method.
+func (m *MockEventPublisher) PublishDeleteEvent(ctx context.Context, event domain.AvatarDeleteEvent) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "PublishDeleteEvent", ctx, event)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// PublishDeleteEvent indicates an expected call of PublishDeleteEvent.
+func (mr *MockEventPublisherMockRecorder) PublishDeleteEvent(ctx, event any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "PublishDeleteEvent", reflect.TypeOf((*MockEventPublisher)(nil).PublishDeleteEvent), ctx, event)
+}
+
 // PublishUploadEvent mocks base method.
 func (m *MockEventPublisher) PublishUploadEvent(ctx context.Context, event domain.AvatarUploadEvent) error {
 	m.ctrl.T.Helper()
