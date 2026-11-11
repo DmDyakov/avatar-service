@@ -174,7 +174,7 @@ func (p *Publisher) PublishDeleteEvent(ctx context.Context, event domain.AvatarD
 	err = ch.PublishWithContext(
 		ctx,
 		ExchangeName,
-		"avatar.delete.created",
+		DeleteRoutingKey,
 		false,
 		false,
 		amqp.Publishing{
@@ -186,7 +186,7 @@ func (p *Publisher) PublishDeleteEvent(ctx context.Context, event domain.AvatarD
 		},
 	)
 	if err != nil {
-		return fmt.Errorf("publish avatar.delete.created: %w", err)
+		return fmt.Errorf("publish %s: %w", DeleteRoutingKey, err)
 	}
 
 	p.logger.Debug("delete event published", zap.String("avatar_id", event.AvatarID))

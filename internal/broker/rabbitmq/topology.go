@@ -16,6 +16,9 @@ const (
 	// UploadRoutingKey — routing key для события upload.
 	UploadRoutingKey = "avatar.uploaded"
 
+	DeleteQueueName  = "avatars.delete.queue"
+	DeleteRoutingKey = "avatar.delete.created"
+
 	// DLXName — dead-letter exchange для неудачных сообщений.
 	DLXName = "avatars.dlx"
 	// DLXType — тип DLX (direct).
@@ -26,15 +29,7 @@ const (
 	DLQRoutingKey = "failed"
 )
 
-// Declare объявляет всю топологию: exchange, DLX, DLQ, thumbnail queue, bindings.
-//
-// Идемпотентно: если топология уже есть с теми же параметрами — RabbitMQ
-// подтвердит. Если параметры различаются (например, изменили args у очереди),
-// RabbitMQ вернёт PRECONDITION_FAILED — тогда нужно удалить очередь вручную
-// (rabbitmqctl delete_queue) или пересоздать volume.
-//
-// Вызывается и publisher'ом, и consumer'ом — оба процесса стартуют независимо,
-// и каждый должен сам поднять топологию, если её нет.
+// Declare объявляет всю топологию: exchange, DLX, DLQ, thumbnail queue, bindings.func Declare(ch *amqp.Channel) error {
 func Declare(ch *amqp.Channel) error {
 	// 1. Основной exchange
 	if err := ch.ExchangeDeclare(
@@ -44,7 +39,7 @@ func Declare(ch *amqp.Channel) error {
 		return fmt.Errorf("declare exchange %s: %w", ExchangeName, err)
 	}
 
-	// 2. DLX (direct)
+	// 2. DLX (общий для всех очередей)
 	if err := ch.ExchangeDeclare(
 		DLXName, DLXType,
 		true, false, false, false, nil,
@@ -67,11 +62,13 @@ func Declare(ch *amqp.Channel) error {
 		return fmt.Errorf("bind dlq %s: %w", DLQName, err)
 	}
 
-	// 5. Thumbnail queue с DLX-аргументами
+	// Общие DLX-аргументы для очередей.
 	args := amqp.Table{
 		"x-dead-letter-exchange":    DLXName,
 		"x-dead-letter-routing-key": DLQRoutingKey,
 	}
+
+	// 5. Thumbnail queue
 	if _, err := ch.QueueDeclare(
 		ThumbnailQueueName,
 		true, false, false, false,
@@ -85,6 +82,22 @@ func Declare(ch *amqp.Channel) error {
 		ThumbnailQueueName, UploadRoutingKey, ExchangeName, false, nil,
 	); err != nil {
 		return fmt.Errorf("bind queue %s: %w", ThumbnailQueueName, err)
+	}
+
+	// 7. Delete queue
+	if _, err := ch.QueueDeclare(
+		DeleteQueueName,
+		true, false, false, false,
+		args,
+	); err != nil {
+		return fmt.Errorf("declare queue %s: %w", DeleteQueueName, err)
+	}
+
+	// 8. Bind exchange → delete queue
+	if err := ch.QueueBind(
+		DeleteQueueName, DeleteRoutingKey, ExchangeName, false, nil,
+	); err != nil {
+		return fmt.Errorf("bind queue %s: %w", DeleteQueueName, err)
 	}
 
 	return nil
