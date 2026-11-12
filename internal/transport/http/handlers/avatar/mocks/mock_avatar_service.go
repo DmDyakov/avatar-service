@@ -57,6 +57,20 @@ func (mr *MockAvatarServiceMockRecorder) Delete(ctx, id, userID any) *gomock.Cal
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Delete", reflect.TypeOf((*MockAvatarService)(nil).Delete), ctx, id, userID)
 }
 
+// DeleteUserAvatar mocks base method.
+func (m *MockAvatarService) DeleteUserAvatar(ctx context.Context, userID, actorID string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "DeleteUserAvatar", ctx, userID, actorID)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// DeleteUserAvatar indicates an expected call of DeleteUserAvatar.
+func (mr *MockAvatarServiceMockRecorder) DeleteUserAvatar(ctx, userID, actorID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DeleteUserAvatar", reflect.TypeOf((*MockAvatarService)(nil).DeleteUserAvatar), ctx, userID, actorID)
+}
+
 // GetByID mocks base method.
 func (m *MockAvatarService) GetByID(ctx context.Context, id string) (*domain.Avatar, io.ReadCloser, error) {
 	m.ctrl.T.Helper()

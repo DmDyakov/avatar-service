@@ -30,6 +30,7 @@ type AvatarHandler interface {
 	GetMetadata(w http.ResponseWriter, r *http.Request)
 	ListByUserID(w http.ResponseWriter, r *http.Request)
 	Delete(w http.ResponseWriter, r *http.Request)
+	DeleteUserAvatar(w http.ResponseWriter, r *http.Request)
 	PostUpload(w http.ResponseWriter, r *http.Request)
 }
 
@@ -63,6 +64,7 @@ func New(
 		r.Post("/avatars", avatarHandler.Upload)
 		r.Get("/avatars/{id}", avatarHandler.Get)
 		r.Delete("/avatars/{id}", avatarHandler.Delete)
+		r.Delete("/users/{user_id}/avatar", avatarHandler.DeleteUserAvatar)
 		r.Get("/avatars/{id}/metadata", avatarHandler.GetMetadata)
 		r.Get("/users/{user_id}/avatar", avatarHandler.GetUserAvatar)
 		r.Get("/users/{user_id}/avatars", avatarHandler.ListByUserID)

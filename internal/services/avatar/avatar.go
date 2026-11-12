@@ -191,22 +191,31 @@ func (s *Service) ListByUserID(
 	return avatars, nil
 }
 
-// Delete помечает аватарку удалённой и публикует событие на очистку S3.
-func (s *Service) Delete(
-	ctx context.Context,
-	id string,
-	userID string,
-) error {
+// Delete помечает аватарку удалённой по ID и публикует событие на очистку S3.
+func (s *Service) Delete(ctx context.Context, id string, userID string) error {
 	avatar, err := s.avatarRepo.GetByID(ctx, id)
 	if err != nil {
 		return err
 	}
+	return s.deleteAndPublish(ctx, avatar, userID)
+}
 
-	if avatar.UserID != userID {
+// DeleteUserAvatar удаляет текущую (последнюю) аватарку пользователя.
+func (s *Service) DeleteUserAvatar(ctx context.Context, userID, actorID string) error {
+	avatar, err := s.avatarRepo.GetUserAvatar(ctx, userID)
+	if err != nil {
+		return err
+	}
+	return s.deleteAndPublish(ctx, avatar, actorID)
+}
+
+// deleteAndPublish проверяет владельца, делает soft delete и публикует событие удаления
+func (s *Service) deleteAndPublish(ctx context.Context, avatar *domain.Avatar, actorID string) error {
+	if avatar.UserID != actorID {
 		return domain.ErrForbidden
 	}
 
-	if err := s.avatarRepo.SoftDelete(ctx, id); err != nil {
+	if err := s.avatarRepo.SoftDelete(ctx, avatar.ID); err != nil {
 		return err
 	}
 

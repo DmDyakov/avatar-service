@@ -31,6 +31,7 @@ type AvatarService interface {
 	GetMetadata(ctx context.Context, id string) (*domain.Avatar, error)
 	ListByUserID(ctx context.Context, userID string) ([]*domain.Avatar, error)
 	Delete(ctx context.Context, id, userID string) error
+	DeleteUserAvatar(ctx context.Context, userID, actorID string) error
 }
 
 type AvatarHandler struct {
@@ -201,6 +202,28 @@ func (h *AvatarHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.service.Delete(r.Context(), id, userID); err != nil {
+		h.handleError(w, err)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// DeleteUserAvatar обрабатывает DELETE /api/v1/users/{user_id}/avatar.
+func (h *AvatarHandler) DeleteUserAvatar(w http.ResponseWriter, r *http.Request) {
+	userID := chi.URLParam(r, "user_id")
+	if err := validateUserID(userID); err != nil {
+		handlers.RespondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	actorID := r.Header.Get("X-User-ID")
+	if err := validateUserID(actorID); err != nil {
+		handlers.RespondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	if err := h.service.DeleteUserAvatar(r.Context(), userID, actorID); err != nil {
 		h.handleError(w, err)
 		return
 	}
