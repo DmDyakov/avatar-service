@@ -191,7 +191,7 @@ func (s *Service) ListByUserID(
 	return avatars, nil
 }
 
-// Delete помечает аватарку удалённой и публикует событие на очистку S3 (AS-301.1).
+// Delete помечает аватарку удалённой и публикует событие на очистку S3.
 func (s *Service) Delete(
 	ctx context.Context,
 	id string,

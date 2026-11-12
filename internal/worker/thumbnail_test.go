@@ -243,7 +243,7 @@ func TestWorkerE2E(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = publisher.Close() }()
 
-	consumer, err := rabbitmq.NewConsumer(testRMQCfg, logger)
+	consumer, err := rabbitmq.NewConsumer(testRMQCfg, logger, rabbitmq.ThumbnailQueueName)
 	require.NoError(t, err)
 	defer func() { _ = consumer.Close() }()
 

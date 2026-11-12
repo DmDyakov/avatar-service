@@ -1,3 +1,5 @@
+// Package rabbitmq is a RabbitMQ client with publisher, consumer,
+// and topology declaration for avatar events.
 package rabbitmq
 
 import (

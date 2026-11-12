@@ -13,14 +13,14 @@ import (
 )
 
 // MessageHandler обрабатывает тело сообщения из очереди.
-// Возвращает ошибку — consumer сделает Nack; nil — Ack.
 type MessageHandler func(ctx context.Context, body []byte) error
 
 // Consumer читает сообщения из очереди с авто-восстановлением
 // через встроенный Recovery в amqp091-go.
 type Consumer struct {
-	logger   *zap.Logger
-	prefetch int
+	logger    *zap.Logger
+	prefetch  int
+	queueName string
 
 	mu   sync.Mutex
 	conn *amqp.Connection
@@ -29,7 +29,7 @@ type Consumer struct {
 
 // NewConsumer подключается к RabbitMQ, объявляет топологию через общий
 // Declare и открывает канал с включённым Recovery.
-func NewConsumer(cfg config.RabbitMQConfig, logger *zap.Logger) (*Consumer, error) {
+func NewConsumer(cfg config.RabbitMQConfig, logger *zap.Logger, queueName string) (*Consumer, error) {
 	conn, err := amqp.DialConfig(cfg.URL, amqp.Config{
 		Heartbeat: cfg.Heartbeat,
 		Dial:      amqp.DefaultDial(cfg.ConnectTimeout),
@@ -51,10 +51,11 @@ func NewConsumer(cfg config.RabbitMQConfig, logger *zap.Logger) (*Consumer, erro
 	}
 
 	c := &Consumer{
-		logger:   logger,
-		prefetch: cfg.PrefetchCount,
-		conn:     conn,
-		ch:       ch,
+		logger:    logger,
+		prefetch:  cfg.PrefetchCount,
+		queueName: queueName,
+		conn:      conn,
+		ch:        ch,
 	}
 
 	if err := c.declare(); err != nil {
@@ -72,28 +73,23 @@ func (c *Consumer) declare() error {
 	return Declare(c.ch)
 }
 
-// Run блокируется до отмены ctx, читая сообщения из thumbnail-очереди
-// и передавая их в handler. При ошибке handler — Nack без requeue,
-// сообщение уходит в DLX → DLQ.
+// Run блокируется до отмены ctx, читая сообщения из c.queueName
+// и передавая их в handler. При ошибке handler — Nack без requeue → DLX → DLQ.
 func (c *Consumer) Run(ctx context.Context, handler MessageHandler) error {
 	if err := c.ch.Qos(c.prefetch, 0, false); err != nil {
 		return fmt.Errorf("set qos: %w", err)
 	}
 
 	msgs, err := c.ch.Consume(
-		ThumbnailQueueName,
+		c.queueName,
 		"",
-		false,
-		false,
-		false,
-		false,
-		nil,
+		false, false, false, false, nil,
 	)
 	if err != nil {
-		return fmt.Errorf("consume: %w", err)
+		return fmt.Errorf("consume %s: %w", c.queueName, err)
 	}
 
-	c.logger.Info("worker consuming", zap.String("queue", ThumbnailQueueName))
+	c.logger.Info("worker consuming", zap.String("queue", c.queueName))
 
 	for {
 		select {
