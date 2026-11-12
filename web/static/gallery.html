@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="ru">
+<html lang="en">
   <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -61,7 +61,7 @@
       </div>
     </div>
     <script>
-    // --- Извлекаем user_id из URL: /web/gallery/{user_id} ---
+    // --- user_id из URL: /web/gallery/{user_id} ---
     const pathParts = window.location.pathname.split('/').filter(Boolean);
     const userId = pathParts[pathParts.length - 1];
 
@@ -95,11 +95,11 @@
     }
 
     // --- Рендер карточки ---
-    // Используем оригинал (/api/v1/avatars/{id})
+    // Используем оригинал (/api/v1/avatars/{id}), т.к. ?size= появится в AS-602.
     // Когда появится — заменить src на /api/v1/avatars/{id}?size=300x300.
     function renderCard(avatar) {
       const card = document.createElement('div');
-      card.className = 'bg-white/10 backdrop-blur-lg rounded-xl shadow-lg border border-white/20 overflow-hidden hover:border-purple-400/50 transition-colors';
+      card.className = 'card relative bg-white/10 backdrop-blur-lg rounded-xl shadow-lg border border-white/20 overflow-hidden hover:border-purple-400/50 transition-colors';
 
       const date = formatDate(avatar.created_at);
       const mime = escapeHtml(avatar.mime_type || 'image');
@@ -114,6 +114,13 @@
             class="w-full h-full object-cover"
             onerror="this.parentElement.innerHTML='<div class=\\'flex items-center justify-center h-full text-white/40 text-sm\\'>Image not found</div>'">
         </div>
+        <button class="delete-btn absolute top-2 right-2 bg-red-600/90 hover:bg-red-700 text-white rounded-lg p-2 shadow-lg transition-colors"
+                data-id="${id}" title="Удалить аватарку">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                  d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
+          </svg>
+        </button>
         <div class="p-3">
           <p class="text-sm font-medium text-white truncate" title="${escapeHtml(avatar.file_name || '')}">
             ${escapeHtml(avatar.file_name || 'avatar')}
@@ -165,6 +172,44 @@
         els.errorMessage.textContent = err.message;
       }
     }
+
+    // --- Удаление: делегирование на контейнер (один listener на все карточки) ---
+    els.gallery.addEventListener('click', async (e) => {
+      const btn = e.target.closest('.delete-btn');
+      if (!btn) return;
+
+      const id = btn.dataset.id;
+      if (!confirm('Удалить эту аватарку?')) return;
+
+      btn.disabled = true;
+      try {
+        const res = await fetch(`/api/v1/avatars/${encodeURIComponent(id)}`, {
+          method: 'DELETE',
+          headers: { 'X-User-ID': userId }
+        });
+
+        if (res.status === 204) {
+          btn.closest('.card').remove();
+          // Если карточек не осталось — показать empty state.
+          if (document.querySelectorAll('.card').length === 0) {
+            els.gallery.classList.add('hidden');
+            els.empty.classList.remove('hidden');
+          }
+        } else if (res.status === 403) {
+          alert('Вы не можете удалить чужую аватарку');
+          btn.disabled = false;
+        } else if (res.status === 404) {
+          alert('Аватарка уже удалена');
+          btn.closest('.card').remove();
+        } else {
+          alert(`Ошибка удаления: HTTP ${res.status}`);
+          btn.disabled = false;
+        }
+      } catch (err) {
+        alert(`Ошибка сети: ${err.message}`);
+        btn.disabled = false;
+      }
+    });
 
     loadGallery();
     </script>
