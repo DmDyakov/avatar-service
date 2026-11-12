@@ -127,7 +127,7 @@ paths:
           $ref: '#/components/responses/InternalError'
     delete:
       tags: [Avatars]
-      summary: Удалить аватарку по ID (❌ не реализовано)
+      summary: Удалить аватарку по ID
       description: |
         Мягкое удаление (deleted_at в БД). Файл в S3 удаляется
         асинхронно через очередь.
