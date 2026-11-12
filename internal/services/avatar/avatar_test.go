@@ -368,6 +368,86 @@ func TestService_ListByUserID(t *testing.T) {
 	})
 }
 
+func TestService_DeleteUserAvatar(t *testing.T) {
+	t.Run("success - deletes latest avatar, publishes event", func(t *testing.T) {
+		mockRepo, _, mockPublisher, svc := setupTest(t)
+
+		avatar := &domain.Avatar{
+			ID:     "avatar-1",
+			UserID: "user-123",
+			S3Key:  "avatars/user-123/avatar-1",
+			ThumbnailS3Keys: map[string]string{
+				"100x100": "thumbnails/avatar-1/100x100.jpg",
+				"300x300": "thumbnails/avatar-1/300x300.jpg",
+			},
+		}
+
+		mockRepo.EXPECT().
+			GetUserAvatar(gomock.Any(), "user-123").
+			Return(avatar, nil)
+
+		mockRepo.EXPECT().
+			SoftDelete(gomock.Any(), "avatar-1").
+			Return(nil)
+
+		mockPublisher.EXPECT().
+			PublishDeleteEvent(gomock.Any(), gomock.Any()).
+			DoAndReturn(func(ctx context.Context, e domain.AvatarDeleteEvent) error {
+				assert.Equal(t, "avatar-1", e.AvatarID)
+				assert.Len(t, e.S3Keys, 3, "оригинал + 2 миниатюры")
+				assert.Contains(t, e.S3Keys, "avatars/user-123/avatar-1")
+				assert.Contains(t, e.S3Keys, "thumbnails/avatar-1/100x100.jpg")
+				assert.Contains(t, e.S3Keys, "thumbnails/avatar-1/300x300.jpg")
+				return nil
+			})
+
+		err := svc.DeleteUserAvatar(context.Background(), "user-123", "user-123")
+		assert.NoError(t, err)
+	})
+
+	t.Run("not found - no active avatars for user", func(t *testing.T) {
+		mockRepo, _, _, svc := setupTest(t)
+
+		mockRepo.EXPECT().
+			GetUserAvatar(gomock.Any(), "nobody").
+			Return(nil, domain.ErrNotFound)
+
+		err := svc.DeleteUserAvatar(context.Background(), "nobody", "nobody")
+		assert.ErrorIs(t, err, domain.ErrNotFound)
+	})
+
+	t.Run("forbidden - actor is not owner", func(t *testing.T) {
+		mockRepo, _, _, svc := setupTest(t)
+
+		mockRepo.EXPECT().
+			GetUserAvatar(gomock.Any(), "victim").
+			Return(&domain.Avatar{ID: "avatar-1", UserID: "victim"}, nil)
+
+		err := svc.DeleteUserAvatar(context.Background(), "victim", "attacker")
+		assert.ErrorIs(t, err, domain.ErrForbidden)
+	})
+
+	t.Run("publish error does not fail delete", func(t *testing.T) {
+		mockRepo, _, mockPublisher, svc := setupTest(t)
+
+		mockRepo.EXPECT().
+			GetUserAvatar(gomock.Any(), "user-123").
+			Return(&domain.Avatar{ID: "avatar-1", UserID: "user-123", S3Key: "key"}, nil)
+
+		mockRepo.EXPECT().
+			SoftDelete(gomock.Any(), "avatar-1").
+			Return(nil)
+
+		mockPublisher.EXPECT().
+			PublishDeleteEvent(gomock.Any(), gomock.Any()).
+			Return(errors.New("rabbit down")).
+			Times(3)
+
+		err := svc.DeleteUserAvatar(context.Background(), "user-123", "user-123")
+		assert.NoError(t, err, "publish error не должен влиять на результат удаления")
+	})
+}
+
 // jpegBytes читает реальный JPEG из testdata.
 //
 // Собранный вручную []byte{0xFF, 0xD8, 0xFF, 0xE0} + нули проходит

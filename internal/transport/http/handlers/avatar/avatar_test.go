@@ -34,6 +34,7 @@ func setupTest(t *testing.T) (*mocks.MockAvatarService, http.Handler) {
 	router.Get("/api/v1/avatars/{id}/metadata", handler.GetMetadata)
 	router.Get("/api/v1/users/{user_id}/avatar", handler.GetUserAvatar)
 	router.Get("/api/v1/users/{user_id}/avatars", handler.ListByUserID)
+	router.Delete("/api/v1/users/{user_id}/avatar", handler.DeleteUserAvatar)
 
 	return mockSvc, router
 }
@@ -444,5 +445,79 @@ func TestAvatarHandler_ListByUserID(t *testing.T) {
 		router.ServeHTTP(rec, req)
 
 		assert.Equal(t, http.StatusBadRequest, rec.Code)
+	})
+}
+
+func TestAvatarHandler_DeleteUserAvatar(t *testing.T) {
+	t.Run("success - 204 No Content", func(t *testing.T) {
+		mockSvc, router := setupTest(t)
+
+		mockSvc.EXPECT().
+			DeleteUserAvatar(gomock.Any(), "user-123", "user-123").
+			Return(nil)
+
+		req := httptest.NewRequest(http.MethodDelete, "/api/v1/users/user-123/avatar", nil)
+		req.Header.Set("X-User-ID", "user-123")
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusNoContent, rec.Code)
+		assert.Empty(t, rec.Body.String(), "204 — тело пустое")
+	})
+
+	t.Run("not found - 404 with spec text", func(t *testing.T) {
+		mockSvc, router := setupTest(t)
+
+		mockSvc.EXPECT().
+			DeleteUserAvatar(gomock.Any(), "nobody", "nobody").
+			Return(domain.ErrNotFound)
+
+		req := httptest.NewRequest(http.MethodDelete, "/api/v1/users/nobody/avatar", nil)
+		req.Header.Set("X-User-ID", "nobody")
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusNotFound, rec.Code)
+
+		var resp map[string]string
+		require.NoError(t, json.NewDecoder(rec.Body).Decode(&resp))
+		assert.Equal(t, "Avatar not found", resp["error"])
+	})
+
+	t.Run("forbidden - 403 with details from spec", func(t *testing.T) {
+		mockSvc, router := setupTest(t)
+
+		mockSvc.EXPECT().
+			DeleteUserAvatar(gomock.Any(), "victim", "attacker").
+			Return(domain.ErrForbidden)
+
+		req := httptest.NewRequest(http.MethodDelete, "/api/v1/users/victim/avatar", nil)
+		req.Header.Set("X-User-ID", "attacker")
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusForbidden, rec.Code)
+
+		var resp map[string]string
+		require.NoError(t, json.NewDecoder(rec.Body).Decode(&resp))
+		assert.Equal(t, "Forbidden", resp["error"])
+		assert.Equal(t, "You can only delete your own avatars", resp["details"])
+	})
+
+	t.Run("missing X-User-ID - 400", func(t *testing.T) {
+		_, router := setupTest(t)
+
+		// Заголовок X-User-ID не устанавливаем.
+		// service не должен вызываться — EXPECT не ставим, gomock упадёт
+		// на unexpected call, если хендлер всё-таки обратится к сервису.
+		req := httptest.NewRequest(http.MethodDelete, "/api/v1/users/user-123/avatar", nil)
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusBadRequest, rec.Code)
+
+		var resp map[string]string
+		require.NoError(t, json.NewDecoder(rec.Body).Decode(&resp))
+		assert.Contains(t, resp["error"], "X-User-ID")
 	})
 }
