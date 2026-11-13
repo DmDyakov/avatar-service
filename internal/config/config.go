@@ -25,6 +25,7 @@ type Config struct {
 	S3              S3Config
 	RabbitMQ        RabbitMQConfig
 	Worker          WorkerConfig
+	RateLimit       RateLimitConfig
 }
 
 // Load — загружает конфигурацию из переменных окружения.
@@ -249,4 +250,18 @@ type WorkerConfig struct {
 	RetryInitialBackoff time.Duration `env:"WORKER_RETRY_INITIAL_BACKOFF" envDefault:"2s" validate:"gt=0"`
 	// RetryMultiplier — множитель backoff (2.0 = 2s → 4s → 8s).
 	RetryMultiplier float64 `env:"WORKER_RETRY_MULTIPLIER" envDefault:"2.0" validate:"gte=1"`
+}
+
+// --------------------------------------
+// RateLimitConfig — лимиты запросов на API.
+//
+// Разделены на общий (для /api/v1/*) и upload (для POST /avatars —
+// операция дорогая: S3 write, декодирование, publish в RabbitMQ).
+// --------------------------------------
+
+type RateLimitConfig struct {
+	RPS         float64 `env:"RATE_LIMIT_RPS" envDefault:"10" validate:"gt=0"`
+	Burst       int     `env:"RATE_LIMIT_BURST" envDefault:"20" validate:"gte=1"`
+	UploadRPS   float64 `env:"RATE_LIMIT_UPLOAD_RPS" envDefault:"2" validate:"gt=0"`
+	UploadBurst int     `env:"RATE_LIMIT_UPLOAD_BURST" envDefault:"5" validate:"gte=1"`
 }
