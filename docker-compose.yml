@@ -94,11 +94,14 @@ services:
       RABBITMQ_PORT: "5672"
       RABBITMQ_VHOST: ${RABBITMQ_VHOST:-/}
 
-      # Rate limiting (AS-401)
+      # Rate limiting
       RATE_LIMIT_RPS: ${RATE_LIMIT_RPS:-10}
       RATE_LIMIT_BURST: ${RATE_LIMIT_BURST:-20}
       RATE_LIMIT_UPLOAD_RPS: ${RATE_LIMIT_UPLOAD_RPS:-2}
       RATE_LIMIT_UPLOAD_BURST: ${RATE_LIMIT_UPLOAD_BURST:-5}
+
+      # CORS
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:3000,http://localhost:8080}
     ports:
       - "8080:8080"
     depends_on:
