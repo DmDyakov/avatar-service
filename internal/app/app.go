@@ -85,12 +85,16 @@ func New(cfg *config.Config, logger *zap.Logger) (*App, error) {
 // Run запускает сервер.
 func (a *App) Run(ctx context.Context) error {
 	defer a.pgPool.Close()
-	defer a.publisher.Close()
+	defer func() {
+		if err := a.publisher.Close(); err != nil {
+			a.logger.Error("publisher close failed", zap.Error(err))
+		}
+	}()
 
-	g, ctx := errgroup.WithContext(ctx)
+	g, gctx := errgroup.WithContext(ctx)
 
 	g.Go(func() error {
-		return a.httpServer.Run(ctx)
+		return a.httpServer.Run(gctx)
 	})
 
 	return g.Wait()

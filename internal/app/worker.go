@@ -67,22 +67,15 @@ func NewWorker(cfg *config.Config, logger *zap.Logger) (*WorkerApp, error) {
 	}, nil
 }
 
-// Run запускает consumer и блокируется до отмены ctx.
-func (a *WorkerApp) Run(ctx context.Context) (err error) {
+// Run запускает consumer'ы и блокируется до отмены ctx.
+func (a *WorkerApp) Run(ctx context.Context) error {
+	defer a.pgPool.Close()
 	defer func() {
-		a.pgPool.Close()
-
-		if closeErr := a.thumbnailConsumer.Close(); closeErr != nil {
-			a.logger.Error("thumbnail consumer close failed", zap.Error(closeErr))
-			if err == nil {
-				err = fmt.Errorf("close thumbnail consumer: %w", closeErr)
-			}
+		if err := a.thumbnailConsumer.Close(); err != nil {
+			a.logger.Error("thumbnail consumer close failed", zap.Error(err))
 		}
-		if closeErr := a.deleteConsumer.Close(); closeErr != nil {
-			a.logger.Error("delete consumer close failed", zap.Error(closeErr))
-			if err == nil {
-				err = fmt.Errorf("close delete consumer: %w", closeErr)
-			}
+		if err := a.deleteConsumer.Close(); err != nil {
+			a.logger.Error("delete consumer close failed", zap.Error(err))
 		}
 	}()
 
