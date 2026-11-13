@@ -41,6 +41,7 @@ type AvatarHandler interface {
 func New(
 	cfg *config.HTTPServerConfig,
 	rateLimitCfg config.RateLimitConfig,
+	corsCfg config.CORSConfig,
 	healthHandler HealthHandler,
 	avatarHandler AvatarHandler,
 	logger *zap.Logger,
@@ -67,6 +68,9 @@ func New(
 
 	// API — общий лимит на чтение, отдельный (строже) на upload.
 	r.Route("/api/v1", func(r chi.Router) {
+		// CORS - первым, до rate limit
+		r.Use(middleware.CORS(corsCfg, logger))
+
 		r.Group(func(r chi.Router) {
 			r.Use(generalLimiter.Middleware)
 

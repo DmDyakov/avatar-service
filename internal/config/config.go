@@ -26,6 +26,7 @@ type Config struct {
 	RabbitMQ        RabbitMQConfig
 	Worker          WorkerConfig
 	RateLimit       RateLimitConfig
+	CORS            CORSConfig
 }
 
 // Load — загружает конфигурацию из переменных окружения.
@@ -264,4 +265,16 @@ type RateLimitConfig struct {
 	Burst       int     `env:"RATE_LIMIT_BURST" envDefault:"20" validate:"gte=1"`
 	UploadRPS   float64 `env:"RATE_LIMIT_UPLOAD_RPS" envDefault:"2" validate:"gt=0"`
 	UploadBurst int     `env:"RATE_LIMIT_UPLOAD_BURST" envDefault:"5" validate:"gte=1"`
+}
+
+// --------------------------------------
+// CORSConfig — настройки CORS для /api/v1.
+//
+// AllowedOrigins читается из env как строка через запятую; envSeparator
+// разбивает на []string. Дефолт — dev-origins (форма на :3000,
+// сервер на :8080).
+// --------------------------------------
+
+type CORSConfig struct {
+	AllowedOrigins []string `env:"CORS_ALLOWED_ORIGINS" envDefault:"http://localhost:3000,http://localhost:8080" envSeparator:","`
 }

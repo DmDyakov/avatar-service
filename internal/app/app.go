@@ -66,6 +66,7 @@ func New(cfg *config.Config, logger *zap.Logger) (*App, error) {
 	httpServer := httpserver.New(
 		&cfg.HTTPServer,
 		cfg.RateLimit,
+		cfg.CORS,
 		healthHandler,
 		avatarHandler,
 		logger,
