@@ -96,10 +96,13 @@ paths:
     get:
       tags: [Avatars]
       summary: Получить аватарку по ID
-      description: Отдаёт бинарник (оригинал) с правильным Content-Type.
+      description: |
+        Отдаёт бинарник (оригинал) с правильным Content-Type.
+        Поддерживает условный GET: If-None-Match с совпавшим ETag → 304.
       operationId: getAvatarByID
       parameters:
         - $ref: '#/components/parameters/AvatarID'
+        - $ref: '#/components/parameters/IfNoneMatch'
       responses:
         '200':
           description: Бинарник аватарки
@@ -121,6 +124,13 @@ paths:
               schema:
                 type: string
                 format: binary
+        '304':
+          description: Not Modified (If-None-Match совпал с текущим ETag)
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/CacheControl'
+            ETag:
+              $ref: '#/components/headers/ETag'
         '404':
           $ref: '#/components/responses/AvatarNotFound'
         '500':
@@ -180,16 +190,21 @@ paths:
     get:
       tags: [Users]
       summary: Текущая аватарка пользователя
-      description: Возвращает последнюю загруженную аватарку пользователя.
+      description: |
+        Возвращает последнюю загруженную аватарку пользователя.
+        Поддерживает условный GET: If-None-Match с совпавшим ETag → 304.
       operationId: getUserAvatar
       parameters:
         - $ref: '#/components/parameters/UserID'
+        - $ref: '#/components/parameters/IfNoneMatch'
       responses:
         '200':
           description: Бинарник аватарки
           headers:
             Cache-Control:
               $ref: '#/components/headers/CacheControl'
+            ETag:
+              $ref: '#/components/headers/ETag'
           content:
             image/jpeg:
               schema:
@@ -203,6 +218,13 @@ paths:
               schema:
                 type: string
                 format: binary
+        '304':
+          description: Not Modified (If-None-Match совпал с текущим ETag)
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/CacheControl'
+            ETag:
+              $ref: '#/components/headers/ETag'
         '404':
           $ref: '#/components/responses/AvatarNotFound'
     delete:
@@ -360,6 +382,17 @@ components:
         maxLength: 255
         example: demo-user
 
+    IfNoneMatch:
+      name: If-None-Match
+      in: header
+      required: false
+      description: |
+        ETag (или список через запятую, или "*") из предыдущего ответа.
+        Если совпадает с текущим — сервер отдаёт 304 Not Modified без тела.
+      schema:
+        type: string
+        example: '"a1b2c3d4e5f6"'
+
   headers:
     CacheControl:
       description: Кеширование ответа
@@ -368,10 +401,12 @@ components:
         example: 'public, max-age=86400'
 
     ETag:
-      description: Хеш содержимого (не реализовано, появится позже)
+      description: |
+        Сильный ETag версии файла. Меняется при обновлении аватарки.
+        Используется с If-None-Match для условного GET (304).
       schema:
         type: string
-        example: '"abc123def456"'
+        example: '"a1b2c3d4e5f6"'
 
   responses:
     AvatarNotFound:

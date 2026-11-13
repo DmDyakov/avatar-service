@@ -3,11 +3,15 @@ package avatar
 
 import (
 	"context"
+	"crypto/md5"
 	"errors"
+	"fmt"
 	"io"
 	"mime/multipart"
 	"net/http"
 	"regexp"
+	"strconv"
+	"strings"
 
 	"avatar-service/internal/domain"
 	"avatar-service/internal/transport/http/handlers"
@@ -133,7 +137,7 @@ func (h *AvatarHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.streamAvatar(w, avatar, reader)
+	h.streamAvatar(w, r, avatar, reader)
 }
 
 // GetUserAvatar обрабатывает GET /api/v1/users/{user_id}/avatar.
@@ -150,10 +154,10 @@ func (h *AvatarHandler) GetUserAvatar(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.streamAvatar(w, avatar, reader)
+	h.streamAvatar(w, r, avatar, reader)
 }
 
-// GetMetadata обрабатывает GET /api/v1/avatars/{id}/metadata
+// GetMetadata обрабатывает GET /api/v1/avatars/{id}/metadata.
 func (h *AvatarHandler) GetMetadata(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	if id == "" {
@@ -187,7 +191,7 @@ func (h *AvatarHandler) ListByUserID(w http.ResponseWriter, r *http.Request) {
 	handlers.RespondJSON(w, http.StatusOK, avatars)
 }
 
-// Delete обрабатывает DELETE /api/v1/avatars/{id}
+// Delete обрабатывает DELETE /api/v1/avatars/{id}.
 func (h *AvatarHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	userID := r.Header.Get("X-User-ID")
 	if err := validateUserID(userID); err != nil {
@@ -232,11 +236,25 @@ func (h *AvatarHandler) DeleteUserAvatar(w http.ResponseWriter, r *http.Request)
 }
 
 // streamAvatar отдаёт файл аватарки в response.
-func (h *AvatarHandler) streamAvatar(w http.ResponseWriter, avatar *domain.Avatar, reader io.ReadCloser) {
+//
+// ETag — сильный, от ID|SizeBytes|UpdatedAt (без чтения файла):
+// меняется при любой смене версии аватарки. If-None-Match с совпавшим
+// тегом → 304 Not Modified без тела (RFC 7232).
+func (h *AvatarHandler) streamAvatar(w http.ResponseWriter, r *http.Request, avatar *domain.Avatar, reader io.ReadCloser) {
 	defer reader.Close()
 
-	w.Header().Set("Content-Type", avatar.MimeType)
+	etag := buildETag(avatar)
+
+	// Заголовки нужны и для 200, и для 304.
+	w.Header().Set("ETag", etag)
 	w.Header().Set("Cache-Control", "public, max-age=86400")
+
+	if inm := r.Header.Get("If-None-Match"); inm != "" && etagMatches(inm, etag) {
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
+
+	w.Header().Set("Content-Type", avatar.MimeType)
 	w.WriteHeader(http.StatusOK)
 
 	if _, err := io.Copy(w, reader); err != nil {
@@ -246,6 +264,29 @@ func (h *AvatarHandler) streamAvatar(w http.ResponseWriter, avatar *domain.Avata
 			zap.Error(err),
 		)
 	}
+}
+
+// buildETag - ETag от ID и размера файла.
+func buildETag(avatar *domain.Avatar) string {
+	h := md5.Sum([]byte(
+		avatar.ID + "|" + strconv.FormatInt(avatar.SizeBytes, 10),
+	))
+	return fmt.Sprintf(`"%x"`, h)
+}
+
+// etagMatches проверяет If-None-Match: список через запятую или "*".
+//
+// Сравнение по целым тегам (не strings.Contains): иначе "abc" совпадёт с "abcdef".
+func etagMatches(ifNoneMatch, etag string) bool {
+	if strings.TrimSpace(ifNoneMatch) == "*" {
+		return true
+	}
+	for _, part := range strings.Split(ifNoneMatch, ",") {
+		if strings.TrimSpace(part) == etag {
+			return true
+		}
+	}
+	return false
 }
 
 // handleError преобразует доменные ошибки в HTTP-ответы.

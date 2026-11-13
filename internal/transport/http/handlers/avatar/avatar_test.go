@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"avatar-service/internal/domain"
 	"avatar-service/internal/transport/http/handlers/avatar/mocks"
@@ -244,6 +245,81 @@ func TestAvatarHandler_Get(t *testing.T) {
 	})
 }
 
+func TestAvatarHandler_Get_ETag(t *testing.T) {
+	newAvatar := func() *domain.Avatar {
+		return &domain.Avatar{
+			ID:        "avatar-1",
+			UserID:    "user-123",
+			MimeType:  "image/jpeg",
+			SizeBytes: 100,
+			UpdatedAt: time.Date(2026, 11, 13, 10, 0, 0, 0, time.UTC),
+		}
+	}
+
+	t.Run("200 includes ETag", func(t *testing.T) {
+		mockSvc, router := setupTest(t)
+
+		mockSvc.EXPECT().
+			GetByID(gomock.Any(), "avatar-1").
+			Return(newAvatar(), io.NopCloser(strings.NewReader("bytes")), nil)
+
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/avatars/avatar-1", nil)
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusOK, rec.Code)
+		etag := rec.Header().Get("ETag")
+		assert.NotEmpty(t, etag, "ETag должен быть в 200")
+		assert.True(t, strings.HasPrefix(etag, `"`) && strings.HasSuffix(etag, `"`),
+			"ETag должен быть в кавычках, got %q", etag)
+	})
+
+	t.Run("If-None-Match matches -> 304 no body", func(t *testing.T) {
+		mockSvc, router := setupTest(t)
+
+		// 1-й запрос: получаем ETag.
+		mockSvc.EXPECT().
+			GetByID(gomock.Any(), "avatar-1").
+			Return(newAvatar(), io.NopCloser(strings.NewReader("bytes")), nil)
+
+		req1 := httptest.NewRequest(http.MethodGet, "/api/v1/avatars/avatar-1", nil)
+		rec1 := httptest.NewRecorder()
+		router.ServeHTTP(rec1, req1)
+		etag := rec1.Header().Get("ETag")
+		require.NotEmpty(t, etag)
+
+		// 2-й запрос: If-None-Match с тем же ETag.
+		mockSvc.EXPECT().
+			GetByID(gomock.Any(), "avatar-1").
+			Return(newAvatar(), io.NopCloser(strings.NewReader("bytes")), nil)
+
+		req2 := httptest.NewRequest(http.MethodGet, "/api/v1/avatars/avatar-1", nil)
+		req2.Header.Set("If-None-Match", etag)
+		rec2 := httptest.NewRecorder()
+		router.ServeHTTP(rec2, req2)
+
+		assert.Equal(t, http.StatusNotModified, rec2.Code)
+		assert.Empty(t, rec2.Body.String(), "304 — без тела")
+		assert.Equal(t, etag, rec2.Header().Get("ETag"), "ETag возвращаем и в 304")
+	})
+
+	t.Run("If-None-Match mismatch -> 200", func(t *testing.T) {
+		mockSvc, router := setupTest(t)
+
+		mockSvc.EXPECT().
+			GetByID(gomock.Any(), "avatar-1").
+			Return(newAvatar(), io.NopCloser(strings.NewReader("bytes")), nil)
+
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/avatars/avatar-1", nil)
+		req.Header.Set("If-None-Match", `"stale-etag"`)
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusOK, rec.Code)
+		assert.NotEmpty(t, rec.Body.String(), "200 — тело есть")
+	})
+}
+
 func TestAvatarHandler_GetUserAvatar(t *testing.T) {
 	t.Run("success - binary with headers", func(t *testing.T) {
 		mockSvc, router := setupTest(t)
@@ -327,7 +403,7 @@ func TestAvatarHandler_GetMetadata(t *testing.T) {
 		var resp map[string]any
 		require.NoError(t, json.NewDecoder(rec.Body).Decode(&resp))
 
-		// Контракт ТЗ п. 1.4: size (не size_bytes), dimensions, thumbnails
+		// Контракт ТЗ п. 1.4: size (не size_bytes), dimensions, thumbnails.
 		assert.Equal(t, float64(42379), resp["size"])
 		assert.NotContains(t, resp, "size_bytes", "по контракту ТЗ — size, не size_bytes")
 
