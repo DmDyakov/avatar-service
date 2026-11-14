@@ -1,0 +1,327 @@
+// Package avatar содержит HTTP-обработчики запросов для работы с аватарками.
+package avatar
+
+import (
+	"context"
+	"crypto/md5"
+	"errors"
+	"fmt"
+	"io"
+	"mime/multipart"
+	"net/http"
+	"regexp"
+	"strconv"
+	"strings"
+
+	"avatar-service/internal/domain"
+	"avatar-service/internal/transport/http/handlers"
+
+	"github.com/go-chi/chi/v5"
+	"go.uber.org/zap"
+)
+
+var userIDPattern = regexp.MustCompile(`^[a-zA-Z0-9_\-]+$`)
+
+const (
+	maxUserIDLen        = 255
+	supportedFormatsMsg = "Supported formats: jpeg, png, webp"
+)
+
+//go:generate mockgen -source=avatar.go -destination=mocks/mock_avatar_service.go -package=mocks
+type AvatarService interface {
+	Upload(ctx context.Context, userID string, file multipart.File, header *multipart.FileHeader) (*domain.Avatar, error)
+	GetByID(ctx context.Context, id string) (*domain.Avatar, io.ReadCloser, error)
+	GetUserAvatar(ctx context.Context, userID string) (*domain.Avatar, io.ReadCloser, error)
+	GetMetadata(ctx context.Context, id string) (*domain.Avatar, error)
+	ListByUserID(ctx context.Context, userID string) ([]*domain.Avatar, error)
+	Delete(ctx context.Context, id, userID string) error
+	DeleteUserAvatar(ctx context.Context, userID, actorID string) error
+}
+
+type AvatarHandler struct {
+	service AvatarService
+	logger  *zap.Logger
+}
+
+func NewAvatarHandler(service AvatarService, logger *zap.Logger) *AvatarHandler {
+	return &AvatarHandler{service: service, logger: logger}
+}
+
+// Upload обрабатывает POST /api/v1/avatars.
+func (h *AvatarHandler) Upload(w http.ResponseWriter, r *http.Request) {
+	userID := r.Header.Get("X-User-ID")
+	if err := validateUserID(userID); err != nil {
+		handlers.RespondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, domain.MaxFileSize)
+
+	if err := r.ParseMultipartForm(domain.MaxFileSize); err != nil {
+		var maxBytesErr *http.MaxBytesError
+		if errors.As(err, &maxBytesErr) {
+			handlers.RespondErrorFileTooLarge(w, domain.MaxFileSize)
+			return
+		}
+		handlers.RespondError(w, http.StatusBadRequest, "invalid multipart form")
+		return
+	}
+
+	file, header, err := r.FormFile("file")
+	if err != nil {
+		handlers.RespondError(w, http.StatusBadRequest, "file field is required")
+		return
+	}
+	defer file.Close()
+
+	avatar, err := h.service.Upload(r.Context(), userID, file, header)
+	if err != nil {
+		h.handleError(w, err)
+		return
+	}
+
+	handlers.RespondJSON(w, http.StatusCreated, avatar)
+}
+
+// PostUpload обрабатывает POST /web/upload.
+//
+// Гибридный вариант: форма отправляется нативно (если JS отключён),
+// сервер делает 303 See Other на галерею. Если JS работает,
+// форма перехватывает submit и использует /api/v1/avatars.
+func (h *AvatarHandler) PostUpload(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, domain.MaxFileSize)
+
+	if err := r.ParseMultipartForm(domain.MaxFileSize); err != nil {
+		var maxBytesErr *http.MaxBytesError
+		if errors.As(err, &maxBytesErr) {
+			handlers.RespondErrorFileTooLarge(w, domain.MaxFileSize)
+			return
+		}
+		handlers.RespondError(w, http.StatusBadRequest, "invalid multipart form")
+		return
+	}
+
+	userID := r.FormValue("user_id")
+	if err := validateUserID(userID); err != nil {
+		handlers.RespondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	file, header, err := r.FormFile("file")
+	if err != nil {
+		handlers.RespondError(w, http.StatusBadRequest, "file field is required")
+		return
+	}
+	defer file.Close()
+
+	_, err = h.service.Upload(r.Context(), userID, file, header)
+	if err != nil {
+		h.handleError(w, err)
+		return
+	}
+
+	http.Redirect(w, r, "/web/gallery/"+userID, http.StatusSeeOther)
+}
+
+// Get обрабатывает GET /api/v1/avatars/{id}.
+func (h *AvatarHandler) Get(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if id == "" {
+		handlers.RespondError(w, http.StatusBadRequest, "id is required")
+		return
+	}
+
+	avatar, reader, err := h.service.GetByID(r.Context(), id)
+	if err != nil {
+		h.handleError(w, err)
+		return
+	}
+
+	h.streamAvatar(w, r, avatar, reader)
+}
+
+// GetUserAvatar обрабатывает GET /api/v1/users/{user_id}/avatar.
+func (h *AvatarHandler) GetUserAvatar(w http.ResponseWriter, r *http.Request) {
+	userID := chi.URLParam(r, "user_id")
+	if err := validateUserID(userID); err != nil {
+		handlers.RespondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	avatar, reader, err := h.service.GetUserAvatar(r.Context(), userID)
+	if err != nil {
+		h.handleError(w, err)
+		return
+	}
+
+	h.streamAvatar(w, r, avatar, reader)
+}
+
+// GetMetadata обрабатывает GET /api/v1/avatars/{id}/metadata.
+func (h *AvatarHandler) GetMetadata(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if id == "" {
+		handlers.RespondError(w, http.StatusBadRequest, "id is required")
+		return
+	}
+
+	avatar, err := h.service.GetMetadata(r.Context(), id)
+	if err != nil {
+		h.handleError(w, err)
+		return
+	}
+
+	handlers.RespondJSON(w, http.StatusOK, toMetadataResponse(avatar))
+}
+
+// ListByUserID обрабатывает GET /api/v1/users/{user_id}/avatars.
+func (h *AvatarHandler) ListByUserID(w http.ResponseWriter, r *http.Request) {
+	userID := chi.URLParam(r, "user_id")
+	if err := validateUserID(userID); err != nil {
+		handlers.RespondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	avatars, err := h.service.ListByUserID(r.Context(), userID)
+	if err != nil {
+		h.handleError(w, err)
+		return
+	}
+
+	handlers.RespondJSON(w, http.StatusOK, avatars)
+}
+
+// Delete обрабатывает DELETE /api/v1/avatars/{id}.
+func (h *AvatarHandler) Delete(w http.ResponseWriter, r *http.Request) {
+	userID := r.Header.Get("X-User-ID")
+	if err := validateUserID(userID); err != nil {
+		handlers.RespondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	id := chi.URLParam(r, "id")
+	if id == "" {
+		handlers.RespondError(w, http.StatusBadRequest, "id is required")
+		return
+	}
+
+	if err := h.service.Delete(r.Context(), id, userID); err != nil {
+		h.handleError(w, err)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// DeleteUserAvatar обрабатывает DELETE /api/v1/users/{user_id}/avatar.
+func (h *AvatarHandler) DeleteUserAvatar(w http.ResponseWriter, r *http.Request) {
+	userID := chi.URLParam(r, "user_id")
+	if err := validateUserID(userID); err != nil {
+		handlers.RespondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	actorID := r.Header.Get("X-User-ID")
+	if err := validateUserID(actorID); err != nil {
+		handlers.RespondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	if err := h.service.DeleteUserAvatar(r.Context(), userID, actorID); err != nil {
+		h.handleError(w, err)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// streamAvatar отдаёт файл аватарки в response.
+//
+// ETag — сильный, от ID|SizeBytes|UpdatedAt (без чтения файла):
+// меняется при любой смене версии аватарки. If-None-Match с совпавшим
+// тегом → 304 Not Modified без тела (RFC 7232).
+func (h *AvatarHandler) streamAvatar(w http.ResponseWriter, r *http.Request, avatar *domain.Avatar, reader io.ReadCloser) {
+	defer reader.Close()
+
+	etag := buildETag(avatar)
+
+	// Заголовки нужны и для 200, и для 304.
+	w.Header().Set("ETag", etag)
+	w.Header().Set("Cache-Control", "public, max-age=86400")
+
+	if inm := r.Header.Get("If-None-Match"); inm != "" && etagMatches(inm, etag) {
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
+
+	w.Header().Set("Content-Type", avatar.MimeType)
+	w.WriteHeader(http.StatusOK)
+
+	if _, err := io.Copy(w, reader); err != nil {
+		h.logger.Error("failed to stream avatar",
+			zap.String("avatar_id", avatar.ID),
+			zap.String("user_id", avatar.UserID),
+			zap.Error(err),
+		)
+	}
+}
+
+// buildETag - ETag от ID и размера файла.
+func buildETag(avatar *domain.Avatar) string {
+	h := md5.Sum([]byte(
+		avatar.ID + "|" + strconv.FormatInt(avatar.SizeBytes, 10),
+	))
+	return fmt.Sprintf(`"%x"`, h)
+}
+
+// etagMatches проверяет If-None-Match: список через запятую или "*".
+//
+// Сравнение по целым тегам (не strings.Contains): иначе "abc" совпадёт с "abcdef".
+func etagMatches(ifNoneMatch, etag string) bool {
+	if strings.TrimSpace(ifNoneMatch) == "*" {
+		return true
+	}
+	for _, part := range strings.Split(ifNoneMatch, ",") {
+		if strings.TrimSpace(part) == etag {
+			return true
+		}
+	}
+	return false
+}
+
+// handleError преобразует доменные ошибки в HTTP-ответы.
+func (h *AvatarHandler) handleError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, domain.ErrNotFound):
+		handlers.RespondError(w, http.StatusNotFound, "Avatar not found")
+	case errors.Is(err, domain.ErrStorageUnavailable):
+		h.logger.Error("storage unavailable", zap.Error(err))
+		handlers.RespondError(w, http.StatusInternalServerError, "internal server error")
+	case errors.Is(err, domain.ErrForbidden):
+		handlers.RespondErrorWithDetails(w, http.StatusForbidden,
+			"Forbidden", "You can only delete your own avatars")
+	case errors.Is(err, domain.ErrInvalidFormat):
+		handlers.RespondErrorWithDetails(w, http.StatusBadRequest,
+			"Invalid file format", supportedFormatsMsg)
+	case errors.Is(err, domain.ErrFileTooLarge):
+		handlers.RespondErrorFileTooLarge(w, domain.MaxFileSize)
+	case errors.Is(err, domain.ErrInvalidInput):
+		handlers.RespondError(w, http.StatusBadRequest, "invalid input")
+	default:
+		h.logger.Error("internal error", zap.Error(err))
+		handlers.RespondError(w, http.StatusInternalServerError, "internal server error")
+	}
+}
+
+func validateUserID(userID string) error {
+	if userID == "" {
+		return errors.New("X-User-ID header is required")
+	}
+	if len(userID) > maxUserIDLen {
+		return errors.New("X-User-ID is too long (max 255)")
+	}
+	if !userIDPattern.MatchString(userID) {
+		return errors.New("X-User-ID contains invalid characters (allowed: a-z, A-Z, 0-9, _, -)")
+	}
+	return nil
+}

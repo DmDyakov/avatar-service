@@ -1,0 +1,655 @@
+openapi: 3.0.3
+
+info:
+  title: Avatar Service API
+  description: |
+    Микросервис для управления аватарками пользователей.
+    Принимает изображения (JPEG, PNG, WebP до 10 MB), хранит их в S3,
+    генерирует миниатюры в фоне через RabbitMQ + worker.
+
+  version: 0.1.0-alpha.1
+  contact:
+    name: Avatar Service
+  license:
+    name: MIT
+
+servers:
+  - url: http://localhost:8080
+    description: Local development
+
+tags:
+  - name: Avatars
+    description: Работа с аватарками
+  - name: Users
+    description: Аватарки пользователя
+  - name: Health
+    description: Проверка состояния сервиса
+  - name: Web
+    description: Веб-интерфейс (HTML)
+
+paths:
+  /api/v1/avatars:
+    post:
+      tags: [Avatars]
+      summary: Загрузить аватарку
+      description: |
+        Принимает multipart/form-data с полем `file`. Валидирует формат
+        (JPEG/PNG/WebP по magic bytes), лимит 10 MB. Сохраняет оригинал
+        в S3, метаданные в Postgres, задачу на генерацию миниатюр в RabbitMQ.
+      operationId: uploadAvatar
+      parameters:
+        - name: X-User-ID
+          in: header
+          required: true
+          description: ID пользователя (a-z, A-Z, 0-9, _, -, до 255 символов)
+          schema:
+            type: string
+            pattern: '^[a-zA-Z0-9_\-]+$'
+            maxLength: 255
+            example: demo-user
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: Файл изображения (JPEG, PNG, WebP), до 10 MB
+      responses:
+        '201':
+          description: Аватарка загружена
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UploadResponse'
+        '400':
+          description: Невалидный формат или отсутствует X-User-ID
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                invalidFormat:
+                  value:
+                    error: Invalid file format
+                    details: 'Supported formats: jpeg, png, webp'
+                missingUserID:
+                  value:
+                    error: X-User-ID header is required
+        '413':
+          description: Файл превышает лимит 10 MB
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: File too large
+                max_size: 10485760
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/v1/avatars/{id}:
+    get:
+      tags: [Avatars]
+      summary: Получить аватарку по ID
+      description: |
+        Отдаёт бинарник (оригинал) с правильным Content-Type.
+        Поддерживает условный GET: If-None-Match с совпавшим ETag → 304.
+      operationId: getAvatarByID
+      parameters:
+        - $ref: '#/components/parameters/AvatarID'
+        - $ref: '#/components/parameters/IfNoneMatch'
+      responses:
+        '200':
+          description: Бинарник аватарки
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/CacheControl'
+            ETag:
+              $ref: '#/components/headers/ETag'
+          content:
+            image/jpeg:
+              schema:
+                type: string
+                format: binary
+            image/png:
+              schema:
+                type: string
+                format: binary
+            image/webp:
+              schema:
+                type: string
+                format: binary
+        '304':
+          description: Not Modified (If-None-Match совпал с текущим ETag)
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/CacheControl'
+            ETag:
+              $ref: '#/components/headers/ETag'
+        '404':
+          $ref: '#/components/responses/AvatarNotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    delete:
+      tags: [Avatars]
+      summary: Удалить аватарку по ID
+      description: |
+        Мягкое удаление (deleted_at в БД). Файл в S3 удаляется
+        асинхронно через очередь.
+      operationId: deleteAvatarByID
+      parameters:
+        - $ref: '#/components/parameters/AvatarID'
+        - name: X-User-ID
+          in: header
+          required: true
+          description: ID пользователя (владелец аватарки)
+          schema:
+            type: string
+            example: demo-user
+      responses:
+        '204':
+          description: Удалено
+        '403':
+          description: Не владелец
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: Forbidden
+                details: You can only delete your own avatars
+        '404':
+          $ref: '#/components/responses/AvatarNotFound'
+
+  /api/v1/avatars/{id}/metadata:
+    get:
+      tags: [Avatars]
+      summary: Метаданные аватарки
+      description: |
+        JSON с размерами, MIME, списком миниатюр.
+        Поля: `size` (не `size_bytes`), `dimensions`, `thumbnails` (массив).
+      operationId: getAvatarMetadata
+      parameters:
+        - $ref: '#/components/parameters/AvatarID'
+      responses:
+        '200':
+          description: Метаданные
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MetadataResponse'
+        '404':
+          $ref: '#/components/responses/AvatarNotFound'
+
+  /api/v1/users/{user_id}/avatar:
+    get:
+      tags: [Users]
+      summary: Текущая аватарка пользователя
+      description: |
+        Возвращает последнюю загруженную аватарку пользователя.
+        Поддерживает условный GET: If-None-Match с совпавшим ETag → 304.
+      operationId: getUserAvatar
+      parameters:
+        - $ref: '#/components/parameters/UserID'
+        - $ref: '#/components/parameters/IfNoneMatch'
+      responses:
+        '200':
+          description: Бинарник аватарки
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/CacheControl'
+            ETag:
+              $ref: '#/components/headers/ETag'
+          content:
+            image/jpeg:
+              schema:
+                type: string
+                format: binary
+            image/png:
+              schema:
+                type: string
+                format: binary
+            image/webp:
+              schema:
+                type: string
+                format: binary
+        '304':
+          description: Not Modified (If-None-Match совпал с текущим ETag)
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/CacheControl'
+            ETag:
+              $ref: '#/components/headers/ETag'
+        '404':
+          $ref: '#/components/responses/AvatarNotFound'
+    delete:
+      tags: [Users]
+      summary: Удалить текущую аватарку пользователя
+      description: |
+        Удаляет последнюю загруженную аватарку пользователя.
+      operationId: deleteUserAvatar
+      parameters:
+        - $ref: '#/components/parameters/UserID'
+        - name: X-User-ID
+          in: header
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: Удалено
+        '403':
+          description: Не владелец
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          $ref: '#/components/responses/AvatarNotFound'
+
+  /api/v1/users/{user_id}/avatars:
+    get:
+      tags: [Users]
+      summary: Список аватарок пользователя
+      description: |
+        Аватарки пользователя, отсортированные по created_at DESC.
+        Мягко удалённые не попадают. Пустой список — `200 []` (не 404).
+      operationId: listUserAvatars
+      parameters:
+        - $ref: '#/components/parameters/UserID'
+      responses:
+        '200':
+          description: Список аватарок (по created_at DESC)
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Avatar'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /health:
+    get:
+      tags: [Health]
+      summary: Проверка состояния сервиса
+      description: |
+        Проверяет доступность зависимостей (Postgres, S3, RabbitMQ).
+        Возвращает 200 если все ok, 503 если хоть одна не готова.
+        Алиас `/ready`.
+      operationId: healthCheck
+      responses:
+        '200':
+          description: Все зависимости доступны
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+        '503':
+          description: Одна или несколько зависимостей недоступны
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+              example:
+                status: degraded
+                components:
+                  postgres: ok
+                  storage: ok
+                  rabbitmq: 'error: connection is closed'
+
+  /web/upload:
+    get:
+      tags: [Web]
+      summary: HTML-форма загрузки
+      description: Отдаёт HTML-страницу с формой (не JSON).
+      operationId: showUploadForm
+      responses:
+        '200':
+          description: HTML-форма
+          content:
+            text/html:
+              schema:
+                type: string
+    post:
+      tags: [Web]
+      summary: Обработка загрузки с формы (нативный submit)
+      description: |
+        Принимает multipart/form-data, вызывает тот же сервис, что и API,
+        и делает 303 See Other на /web/gallery/{user_id}.
+      operationId: processUploadForm
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [user_id, file]
+              properties:
+                user_id:
+                  type: string
+                  pattern: '^[a-zA-Z0-9_\-]+$'
+                  maxLength: 255
+                file:
+                  type: string
+                  format: binary
+      responses:
+        '303':
+          description: Успех, редирект на галерею
+          headers:
+            Location:
+              schema:
+                type: string
+              example: /web/gallery/demo-user
+        '400':
+          description: Ошибка валидации
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '413':
+          description: Файл превышает лимит 10 MB
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+components:
+  parameters:
+    AvatarID:
+      name: id
+      in: path
+      required: true
+      description: UUID аватарки
+      schema:
+        type: string
+        format: uuid
+        example: 9264a253-178d-46e5-8f73-0c1a770f0da5
+
+    UserID:
+      name: user_id
+      in: path
+      required: true
+      description: ID пользователя
+      schema:
+        type: string
+        pattern: '^[a-zA-Z0-9_\-]+$'
+        maxLength: 255
+        example: demo-user
+
+    IfNoneMatch:
+      name: If-None-Match
+      in: header
+      required: false
+      description: |
+        ETag (или список через запятую, или "*") из предыдущего ответа.
+        Если совпадает с текущим — сервер отдаёт 304 Not Modified без тела.
+      schema:
+        type: string
+        example: '"a1b2c3d4e5f6"'
+
+  headers:
+    CacheControl:
+      description: Кеширование ответа
+      schema:
+        type: string
+        example: 'public, max-age=86400'
+
+    ETag:
+      description: |
+        Сильный ETag версии файла. Меняется при обновлении аватарки.
+        Используется с If-None-Match для условного GET (304).
+      schema:
+        type: string
+        example: '"a1b2c3d4e5f6"'
+
+  responses:
+    AvatarNotFound:
+      description: Аватарка не найдена (нет записи или deleted_at IS NOT NULL)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error: Avatar not found
+
+    InternalError:
+      description: Внутренняя ошибка сервера
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error: internal server error
+
+  schemas:
+    Avatar:
+      type: object
+      description: Доменная модель аватарки (полный набор полей из БД).
+      required:
+        - id
+        - user_id
+        - file_name
+        - mime_type
+        - size_bytes
+        - s3_key
+        - upload_status
+        - processing_status
+        - attempts
+        - created_at
+        - updated_at
+      properties:
+        id:
+          type: string
+          format: uuid
+          example: 9264a253-178d-46e5-8f73-0c1a770f0da5
+        user_id:
+          type: string
+          example: demo-user
+        file_name:
+          type: string
+          example: avatar.jpg
+        mime_type:
+          type: string
+          enum: [image/jpeg, image/png, image/webp]
+          example: image/jpeg
+        size_bytes:
+          type: integer
+          format: int64
+          minimum: 1
+          example: 42379
+        s3_key:
+          type: string
+          description: Ключ в S3-бакете (структура avatars/{user_id}/{avatar_id})
+          example: avatars/demo-user/9264a253-178d-46e5-8f73-0c1a770f0da5
+        width:
+          type: integer
+          nullable: true
+          description: |
+            Ширина оригинала. Заполняется при upload (image.DecodeConfig).
+            null — ещё не декодировали (старая запись).
+          example: 540
+        height:
+          type: integer
+          nullable: true
+          description: Высота оригинала (заполняется одновременно с width).
+          example: 360
+        thumbnail_s3_keys:
+          type: object
+          nullable: true
+          additionalProperties:
+            type: string
+          description: |
+            Ключи миниатюр: {"100x100": "...", "300x300": "..."}.
+            Заполняется воркером после upload. null — миниатюры ещё не сгенерированы.
+          example:
+            '100x100': thumbnails/9264a253-178d-46e5-8f73-0c1a770f0da5/100x100.jpg
+            '300x300': thumbnails/9264a253-178d-46e5-8f73-0c1a770f0da5/300x300.jpg
+        upload_status:
+          type: string
+          enum: [uploading, uploaded, failed]
+          example: uploaded
+        processing_status:
+          type: string
+          enum: [pending, processing, completed, failed]
+          example: pending
+        attempts:
+          type: integer
+          minimum: 0
+          description: |
+            Счётчик неудачных обработок. Увеличивается после исчерпания
+            retry (3 попытки с exponential backoff), не на каждой попытке.
+          example: 0
+        created_at:
+          type: string
+          format: date-time
+          example: '2026-10-31T08:51:29.785314Z'
+        updated_at:
+          type: string
+          format: date-time
+          example: '2026-10-31T08:51:29.785314Z'
+        deleted_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: Soft delete. null — активная запись.
+          example: null
+
+    UploadResponse:
+      type: object
+      description: Ответ POST /api/v1/avatars (упрощённый Avatar).
+      required:
+        [
+          id,
+          user_id,
+          file_name,
+          mime_type,
+          size_bytes,
+          s3_key,
+          upload_status,
+          processing_status,
+          created_at,
+        ]
+      properties:
+        id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+        file_name:
+          type: string
+        mime_type:
+          type: string
+        size_bytes:
+          type: integer
+          format: int64
+        s3_key:
+          type: string
+        width:
+          type: integer
+          nullable: true
+        height:
+          type: integer
+          nullable: true
+        upload_status:
+          type: string
+          enum: [uploading, uploaded, failed]
+        processing_status:
+          type: string
+          enum: [pending, processing, completed, failed]
+        attempts:
+          type: integer
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    MetadataResponse:
+      type: object
+      description: |
+        Ответ GET /api/v1/avatars/{id}/metadata.
+        Отличается от Avatar: size (не size_bytes), dimensions,
+        thumbnails как массив [{size, url}].
+      properties:
+        id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+        file_name:
+          type: string
+        mime_type:
+          type: string
+        size:
+          type: integer
+          format: int64
+          description: Размер в байтах (в Avatar — size_bytes)
+        dimensions:
+          type: object
+          properties:
+            width:
+              type: integer
+            height:
+              type: integer
+        thumbnails:
+          type: array
+          items:
+            type: object
+            properties:
+              size:
+                type: string
+                example: '100x100'
+              url:
+                type: string
+                example: /api/v1/avatars/{id}?size=100x100
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+          example: Invalid file format
+        details:
+          type: string
+          description: Дополнительное описание (для 400/403)
+          example: 'Supported formats: jpeg, png, webp'
+        max_size:
+          type: integer
+          format: int64
+          description: Максимальный размер файла в байтах (для 413)
+          example: 10485760
+
+    HealthResponse:
+      type: object
+      required: [status, components]
+      properties:
+        status:
+          type: string
+          enum: [ok, degraded]
+          example: ok
+        components:
+          type: object
+          properties:
+            postgres:
+              type: string
+              example: ok
+            storage:
+              type: string
+              example: ok
+            rabbitmq:
+              type: string
+              example: ok
