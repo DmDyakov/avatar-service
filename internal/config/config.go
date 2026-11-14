@@ -2,6 +2,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"net/url"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"github.com/caarlos0/env/v11"
+	"github.com/go-playground/validator/v10"
 	"github.com/joho/godotenv"
 )
 
@@ -28,6 +30,8 @@ type Config struct {
 	RateLimit       RateLimitConfig
 	CORS            CORSConfig
 }
+
+var validate = validator.New()
 
 // Load — загружает конфигурацию из переменных окружения.
 func Load() (*Config, error) {
@@ -49,6 +53,10 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("build rabbitmq URL: %w", err)
 	}
 
+	if err := validate.Struct(cfg); err != nil {
+		return nil, formatValidationError(err)
+	}
+
 	return cfg, nil
 }
 
@@ -65,6 +73,22 @@ func (c *Config) IsStaging() bool {
 // IsDev — проверяет, является ли окружение development
 func (c *Config) IsDev() bool {
 	return c.AppEnv == "dev"
+}
+
+// formatValidationError превращает validator.ValidationErrors в читаемую
+// ошибку с именем поля, правилом и значением.
+func formatValidationError(err error) error {
+	var ve validator.ValidationErrors
+	if !errors.As(err, &ve) {
+		return fmt.Errorf("config validation: %w", err)
+	}
+
+	var b strings.Builder
+	b.WriteString("config validation failed:")
+	for _, fe := range ve {
+		fmt.Fprintf(&b, "\n  %s: %s (got %q)", fe.Field(), fe.Tag(), fe.Value())
+	}
+	return errors.New(b.String())
 }
 
 // --------------------------------------
