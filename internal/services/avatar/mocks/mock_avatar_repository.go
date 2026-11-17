@@ -14,6 +14,7 @@ import (
 	context "context"
 	reflect "reflect"
 
+	pgx "github.com/jackc/pgx/v5"
 	gomock "go.uber.org/mock/gomock"
 )
 
@@ -53,6 +54,20 @@ func (m *MockAvatarRepository) Create(ctx context.Context, avatar *domain.Avatar
 func (mr *MockAvatarRepositoryMockRecorder) Create(ctx, avatar any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Create", reflect.TypeOf((*MockAvatarRepository)(nil).Create), ctx, avatar)
+}
+
+// CreateTx mocks base method.
+func (m *MockAvatarRepository) CreateTx(ctx context.Context, tx pgx.Tx, avatar *domain.Avatar) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "CreateTx", ctx, tx, avatar)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// CreateTx indicates an expected call of CreateTx.
+func (mr *MockAvatarRepositoryMockRecorder) CreateTx(ctx, tx, avatar any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateTx", reflect.TypeOf((*MockAvatarRepository)(nil).CreateTx), ctx, tx, avatar)
 }
 
 // GetByID mocks base method.
@@ -112,4 +127,18 @@ func (m *MockAvatarRepository) SoftDelete(ctx context.Context, id string) error 
 func (mr *MockAvatarRepositoryMockRecorder) SoftDelete(ctx, id any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SoftDelete", reflect.TypeOf((*MockAvatarRepository)(nil).SoftDelete), ctx, id)
+}
+
+// SoftDeleteTx mocks base method.
+func (m *MockAvatarRepository) SoftDeleteTx(ctx context.Context, tx pgx.Tx, id string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "SoftDeleteTx", ctx, tx, id)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// SoftDeleteTx indicates an expected call of SoftDeleteTx.
+func (mr *MockAvatarRepositoryMockRecorder) SoftDeleteTx(ctx, tx, id any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SoftDeleteTx", reflect.TypeOf((*MockAvatarRepository)(nil).SoftDeleteTx), ctx, tx, id)
 }

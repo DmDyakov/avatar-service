@@ -13,28 +13,55 @@ import (
 	"avatar-service/internal/domain"
 	"avatar-service/internal/services/avatar/mocks"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 	"go.uber.org/zap"
 )
 
-func setupTest(t *testing.T) (*mocks.MockAvatarRepository, *mocks.MockStorage, *mocks.MockEventPublisher, *Service) {
+// fakeTxManager — hand-rolled мок TxManager: выполняет fn с nil-tx.
+// Моки репозитория и outbox игнорируют tx (принимают gomock.Any()),
+// поэтому nil безопасен и не требует MockTxManager.
+type fakeTxManager struct {
+	err error
+}
+
+func (f *fakeTxManager) WithTx(
+	ctx context.Context,
+	fn func(ctx context.Context, tx pgx.Tx) error,
+) error {
+	if f.err != nil {
+		return f.err
+	}
+	return fn(ctx, nil)
+}
+
+func setupTest(t *testing.T) (
+	*mocks.MockAvatarRepository,
+	*mocks.MockStorage,
+	*mocks.MockOutboxWriter,
+	*Service,
+) {
 	t.Helper()
 
 	ctrl := gomock.NewController(t)
 	mockRepo := mocks.NewMockAvatarRepository(ctrl)
 	mockStorage := mocks.NewMockStorage(ctrl)
-	mockPublisher := mocks.NewMockEventPublisher(ctrl)
+	mockOutbox := mocks.NewMockOutboxWriter(ctrl)
 
-	svc := New(mockRepo, mockStorage, mockPublisher, zap.NewNop())
+	svc := New(&fakeTxManager{}, mockRepo, mockStorage, mockOutbox, zap.NewNop())
 
-	return mockRepo, mockStorage, mockPublisher, svc
+	return mockRepo, mockStorage, mockOutbox, svc
 }
 
+// -----------------------------------------------------------------
+// Upload
+// -----------------------------------------------------------------
+
 func TestService_Upload(t *testing.T) {
-	t.Run("success", func(t *testing.T) {
-		mockRepo, mockStorage, mockPublisher, svc := setupTest(t)
+	t.Run("success - writes to outbox in same tx", func(t *testing.T) {
+		mockRepo, mockStorage, mockOutbox, svc := setupTest(t)
 
 		mockStorage.EXPECT().
 			Upload(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), "image/jpeg").
@@ -45,15 +72,17 @@ func TestService_Upload(t *testing.T) {
 			})
 
 		mockRepo.EXPECT().
-			Create(gomock.Any(), gomock.Any()).
+			CreateTx(gomock.Any(), gomock.Any(), gomock.Any()).
 			Return(nil)
 
-		mockPublisher.EXPECT().
-			PublishUploadEvent(gomock.Any(), gomock.Any()).
-			DoAndReturn(func(ctx context.Context, e domain.AvatarUploadEvent) error {
-				assert.NotEmpty(t, e.AvatarID)
-				assert.Equal(t, "user-123", e.UserID)
-				assert.Contains(t, e.S3Key, "avatars/user-123/")
+		mockOutbox.EXPECT().
+			Write(gomock.Any(), gomock.Any(), "avatar.upload", gomock.Any()).
+			DoAndReturn(func(ctx context.Context, tx pgx.Tx, eventType string, payload any) error {
+				ev, ok := payload.(domain.AvatarUploadEvent)
+				require.True(t, ok, "payload должен быть domain.AvatarUploadEvent")
+				assert.NotEmpty(t, ev.AvatarID)
+				assert.Equal(t, "user-123", ev.UserID)
+				assert.Contains(t, ev.S3Key, "avatars/user-123/")
 				return nil
 			})
 
@@ -127,7 +156,7 @@ func TestService_Upload(t *testing.T) {
 		assert.ErrorIs(t, err, storageErr)
 	})
 
-	t.Run("repository error - rollback s3", func(t *testing.T) {
+	t.Run("repo error - rollback s3", func(t *testing.T) {
 		mockRepo, mockStorage, _, svc := setupTest(t)
 
 		mockStorage.EXPECT().
@@ -135,14 +164,14 @@ func TestService_Upload(t *testing.T) {
 			Return(nil)
 
 		mockRepo.EXPECT().
-			Create(gomock.Any(), gomock.Any()).
+			CreateTx(gomock.Any(), gomock.Any(), gomock.Any()).
 			Return(domain.ErrInvalidInput)
 
+		// Outbox.Write НЕ ожидается: CreateTx упал → транзакция откатывается.
+		// S3-файл откатывается.
 		mockStorage.EXPECT().
 			Delete(gomock.Any(), gomock.Any()).
 			Return(nil)
-
-		// PublishUploadEvent НЕ ожидается — Create упал, публикация не должна вызываться.
 
 		file, header := createMultipartFile(t, "avatar.jpg", jpegBytes(t))
 
@@ -150,57 +179,38 @@ func TestService_Upload(t *testing.T) {
 		assert.ErrorIs(t, err, domain.ErrInvalidInput)
 	})
 
-	t.Run("publish error does not fail upload", func(t *testing.T) {
-		mockRepo, mockStorage, mockPublisher, svc := setupTest(t)
+	t.Run("outbox write error - rollback s3", func(t *testing.T) {
+		mockRepo, mockStorage, mockOutbox, svc := setupTest(t)
 
 		mockStorage.EXPECT().
 			Upload(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 			Return(nil)
 
 		mockRepo.EXPECT().
-			Create(gomock.Any(), gomock.Any()).
+			CreateTx(gomock.Any(), gomock.Any(), gomock.Any()).
 			Return(nil)
 
-		// 3 попытки в publishWithRetry, все падают — но Upload всё равно успешен (AS-108.7).
-		mockPublisher.EXPECT().
-			PublishUploadEvent(gomock.Any(), gomock.Any()).
-			Return(errors.New("rabbit down")).
-			Times(3)
+		outboxErr := errors.New("outbox table broken")
+		mockOutbox.EXPECT().
+			Write(gomock.Any(), gomock.Any(), "avatar.upload", gomock.Any()).
+			Return(outboxErr)
 
-		file, header := createMultipartFile(t, "avatar.jpg", jpegBytes(t))
-
-		avatar, err := svc.Upload(context.Background(), "user-123", file, header)
-		require.NoError(t, err)
-		assert.NotEmpty(t, avatar.ID)
-	})
-
-	t.Run("publish succeeds on retry", func(t *testing.T) {
-		mockRepo, mockStorage, mockPublisher, svc := setupTest(t)
-
+		// Транзакция откатится → S3-файл тоже надо откатить.
 		mockStorage.EXPECT().
-			Upload(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+			Delete(gomock.Any(), gomock.Any()).
 			Return(nil)
-
-		mockRepo.EXPECT().
-			Create(gomock.Any(), gomock.Any()).
-			Return(nil)
-
-		gomock.InOrder(
-			mockPublisher.EXPECT().
-				PublishUploadEvent(gomock.Any(), gomock.Any()).
-				Return(errors.New("transient")),
-			mockPublisher.EXPECT().
-				PublishUploadEvent(gomock.Any(), gomock.Any()).
-				Return(nil),
-		)
 
 		file, header := createMultipartFile(t, "avatar.jpg", jpegBytes(t))
 
-		avatar, err := svc.Upload(context.Background(), "user-123", file, header)
-		require.NoError(t, err)
-		assert.NotEmpty(t, avatar.ID)
+		_, err := svc.Upload(context.Background(), "user-123", file, header)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "outbox table broken")
 	})
 }
+
+// -----------------------------------------------------------------
+// GetByID
+// -----------------------------------------------------------------
 
 func TestService_GetByID(t *testing.T) {
 	t.Run("success", func(t *testing.T) {
@@ -271,6 +281,10 @@ func TestService_GetByID(t *testing.T) {
 	})
 }
 
+// -----------------------------------------------------------------
+// GetUserAvatar
+// -----------------------------------------------------------------
+
 func TestService_GetUserAvatar(t *testing.T) {
 	t.Run("success", func(t *testing.T) {
 		mockRepo, mockStorage, _, svc := setupTest(t)
@@ -324,6 +338,10 @@ func TestService_GetUserAvatar(t *testing.T) {
 	})
 }
 
+// -----------------------------------------------------------------
+// ListByUserID
+// -----------------------------------------------------------------
+
 func TestService_ListByUserID(t *testing.T) {
 	t.Run("success with avatars", func(t *testing.T) {
 		mockRepo, _, _, svc := setupTest(t)
@@ -368,9 +386,13 @@ func TestService_ListByUserID(t *testing.T) {
 	})
 }
 
+// -----------------------------------------------------------------
+// DeleteUserAvatar
+// -----------------------------------------------------------------
+
 func TestService_DeleteUserAvatar(t *testing.T) {
-	t.Run("success - deletes latest avatar, publishes event", func(t *testing.T) {
-		mockRepo, _, mockPublisher, svc := setupTest(t)
+	t.Run("success - soft delete + outbox in same tx", func(t *testing.T) {
+		mockRepo, _, mockOutbox, svc := setupTest(t)
 
 		avatar := &domain.Avatar{
 			ID:     "avatar-1",
@@ -387,17 +409,19 @@ func TestService_DeleteUserAvatar(t *testing.T) {
 			Return(avatar, nil)
 
 		mockRepo.EXPECT().
-			SoftDelete(gomock.Any(), "avatar-1").
+			SoftDeleteTx(gomock.Any(), gomock.Any(), "avatar-1").
 			Return(nil)
 
-		mockPublisher.EXPECT().
-			PublishDeleteEvent(gomock.Any(), gomock.Any()).
-			DoAndReturn(func(ctx context.Context, e domain.AvatarDeleteEvent) error {
-				assert.Equal(t, "avatar-1", e.AvatarID)
-				assert.Len(t, e.S3Keys, 3, "оригинал + 2 миниатюры")
-				assert.Contains(t, e.S3Keys, "avatars/user-123/avatar-1")
-				assert.Contains(t, e.S3Keys, "thumbnails/avatar-1/100x100.jpg")
-				assert.Contains(t, e.S3Keys, "thumbnails/avatar-1/300x300.jpg")
+		mockOutbox.EXPECT().
+			Write(gomock.Any(), gomock.Any(), "avatar.delete", gomock.Any()).
+			DoAndReturn(func(ctx context.Context, tx pgx.Tx, eventType string, payload any) error {
+				ev, ok := payload.(domain.AvatarDeleteEvent)
+				require.True(t, ok, "payload должен быть domain.AvatarDeleteEvent")
+				assert.Equal(t, "avatar-1", ev.AvatarID)
+				assert.Len(t, ev.S3Keys, 3, "оригинал + 2 миниатюры")
+				assert.Contains(t, ev.S3Keys, "avatars/user-123/avatar-1")
+				assert.Contains(t, ev.S3Keys, "thumbnails/avatar-1/100x100.jpg")
+				assert.Contains(t, ev.S3Keys, "thumbnails/avatar-1/300x300.jpg")
 				return nil
 			})
 
@@ -427,24 +451,66 @@ func TestService_DeleteUserAvatar(t *testing.T) {
 		assert.ErrorIs(t, err, domain.ErrForbidden)
 	})
 
-	t.Run("publish error does not fail delete", func(t *testing.T) {
-		mockRepo, _, mockPublisher, svc := setupTest(t)
+	t.Run("soft delete error propagates, no outbox write", func(t *testing.T) {
+		mockRepo, _, _, svc := setupTest(t)
 
 		mockRepo.EXPECT().
 			GetUserAvatar(gomock.Any(), "user-123").
 			Return(&domain.Avatar{ID: "avatar-1", UserID: "user-123", S3Key: "key"}, nil)
 
 		mockRepo.EXPECT().
-			SoftDelete(gomock.Any(), "avatar-1").
-			Return(nil)
+			SoftDeleteTx(gomock.Any(), gomock.Any(), "avatar-1").
+			Return(domain.ErrNotFound)
 
-		mockPublisher.EXPECT().
-			PublishDeleteEvent(gomock.Any(), gomock.Any()).
-			Return(errors.New("rabbit down")).
-			Times(3)
+		// Outbox.Write НЕ ожидается — SoftDeleteTx упал, транзакция откатится.
 
 		err := svc.DeleteUserAvatar(context.Background(), "user-123", "user-123")
-		assert.NoError(t, err, "publish error не должен влиять на результат удаления")
+		assert.ErrorIs(t, err, domain.ErrNotFound)
+	})
+}
+
+// -----------------------------------------------------------------
+// Delete (по ID)
+// -----------------------------------------------------------------
+
+func TestService_Delete(t *testing.T) {
+	t.Run("success", func(t *testing.T) {
+		mockRepo, _, mockOutbox, svc := setupTest(t)
+
+		avatar := &domain.Avatar{
+			ID:     "avatar-1",
+			UserID: "user-123",
+			S3Key:  "avatars/user-123/avatar-1",
+		}
+		mockRepo.EXPECT().
+			GetByID(gomock.Any(), "avatar-1").
+			Return(avatar, nil)
+
+		mockRepo.EXPECT().
+			SoftDeleteTx(gomock.Any(), gomock.Any(), "avatar-1").
+			Return(nil)
+
+		mockOutbox.EXPECT().
+			Write(gomock.Any(), gomock.Any(), "avatar.delete", gomock.Any()).
+			DoAndReturn(func(ctx context.Context, tx pgx.Tx, eventType string, payload any) error {
+				ev := payload.(domain.AvatarDeleteEvent)
+				assert.Equal(t, "avatar-1", ev.AvatarID)
+				return nil
+			})
+
+		err := svc.Delete(context.Background(), "avatar-1", "user-123")
+		assert.NoError(t, err)
+	})
+
+	t.Run("forbidden", func(t *testing.T) {
+		mockRepo, _, _, svc := setupTest(t)
+
+		mockRepo.EXPECT().
+			GetByID(gomock.Any(), "avatar-1").
+			Return(&domain.Avatar{ID: "avatar-1", UserID: "victim"}, nil)
+
+		err := svc.Delete(context.Background(), "avatar-1", "attacker")
+		assert.ErrorIs(t, err, domain.ErrForbidden)
 	})
 }
 

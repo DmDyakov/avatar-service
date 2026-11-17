@@ -1,4 +1,4 @@
-.PHONY: help run worker build test test-cover test-cover-full test-race lint check fmt tidy generate \
+.PHONY: help run worker relay build test test-cover test-cover-full test-race lint check fmt tidy generate \
         docker-up docker-down docker-logs docker-ps down-v \
         infra-up infra-down \
         openapi-validate openapi-ui \
@@ -23,10 +23,14 @@ run: ## Запустить HTTP-сервер локально
 worker: ## Запустить воркер локально
 	go run ./cmd/worker
 
+relay: ## Запустить outbox relay локально
+	go run ./cmd/relay
+
 # --- Сборка ---
-build: ## Собрать бинарники server и worker
+build: ## Собрать бинарники server, worker и relay
 	go build -o bin/server ./cmd/server
 	go build -o bin/worker ./cmd/worker
+	go build -o bin/relay  ./cmd/relay
 
 # --- Тесты ---
 test: ## Запустить все тесты (с testcontainers, нужен Docker)
@@ -36,14 +40,18 @@ test: ## Запустить все тесты (с testcontainers, нужен Doc
 # Исключены: cmd/* (main), internal/app (DI), internal/logger (обёртка),
 # pkg/buildinfo (ldflags), migrations (go:embed), mocks (generated),
 # repository/worker/storage/broker (интеграционные — test-cover-full).
+# internal/relay включён: у него есть unit-часть (логика publish/drain,
+# ретраи, staleSweep), не требующая testcontainers.
 COVERAGE_PKGS ?= ./internal/config/... \
                  ./internal/services/... \
                  ./internal/transport/http/handlers/... \
                  ./internal/transport/http/middleware/... \
+                 ./internal/relay/... \
                  ./pkg/lifecycle/...
 
 # Дополнительные пакеты для полного прогона с testcontainers.
 COVERAGE_PKGS_FULL ?= ./internal/repository/postgres/avatar/... \
+                      ./internal/repository/postgres/outbox/... \
                       ./internal/worker/...
 
 # Минимальный порог покрытия (AS-403.2, ТЗ п. 3.1).

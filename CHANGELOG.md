@@ -3,7 +3,41 @@
 Все значимые изменения в проекте. Формат — [Keep a Changelog](https://keepachangelog.com/ru/1.1.0/),
 версионирование — [SemVer](https://semver.org/lang/ru/).
 
-## [Unreleased]
+## [0.1.0-alpha.2] - 2026-11-15
+
+### Added
+
+- **Transactional outbox** (`outbox_events`, миграция `000002`): события
+  `avatar.upload` / `avatar.delete` пишутся в БД в одной транзакции с
+  бизнес-изменениями (`Create` / `SoftDelete`). Устраняет окно потери
+  между коммитом и публикацией в RabbitMQ.
+- **Outbox relay** (`cmd/relay`): отдельный процесс публикует события из
+  outbox в RabbitMQ через polling (`FOR UPDATE SKIP LOCKED`, batch,
+  exponential retry, `staleSweep` для восстановления зависших
+  `in_progress`). At-least-once доставка.
+- **`TxManager`** (`internal/repository/postgres/txmanager.go`): обёртка
+  над `pgx.Tx` для выполнения нескольких операций в одной транзакции.
+- **`OutboxConfig`**: `OUTBOX_BATCH_SIZE`, `OUTBOX_MAX_ATTEMPTS`,
+  `OUTBOX_POLL_INTERVAL`, `OUTBOX_STALE_LOCK_TIMEOUT`,
+  `OUTBOX_STALE_SWEEP_PERIOD`.
+
+### Changed
+
+- **`Service.Upload` / `Service.deleteAndPublish`** больше не вызывают
+  `publisher.Publish*` напрямую — пишут в outbox через `TxManager`.
+  `publishWithRetry` удалён; retry-логика переехала в relay.
+- **`Server`** больше не публикует в RabbitMQ. Publisher из `App`
+  удалён, health-check сервера проверяет только `postgres` и `storage`.
+  Недоступность RabbitMQ больше не блокирует приём аватарок (503 в
+  `/ready` устранён).
+- **`docker-compose.yml`**: добавлен сервис `relay`. Сервис `server`
+  больше не получает `RABBITMQ_*`.
+- **`Dockerfile`**: собирается третий бинарник — `relay`.
+
+### Removed
+
+- `EventPublisher` из `internal/services/avatar` (удалён из интерфейса
+  и моков).
 
 ## [0.1.0-alpha.1] - 2026-11-13
 

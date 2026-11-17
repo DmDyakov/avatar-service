@@ -10,25 +10,41 @@ import (
 	"avatar-service/internal/domain"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+// dbConn — общий интерфейс для pgxpool.Pool и pgx.Tx: позволяет
+// выполнять одни и те же запросы и вне, и внутри транзакции.
+type dbConn interface {
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
+}
 
 // AvatarRepository реализует работу с аватарками в PostgreSQL.
 type AvatarRepository struct {
 	pool *pgxpool.Pool
 }
 
-// NewAvatarRepository создаёт репозиторий аватарок.
 func NewAvatarRepository(pool *pgxpool.Pool) *AvatarRepository {
 	return &AvatarRepository{pool: pool}
 }
 
-// Create сохраняет новую аватарку.
+// Create сохраняет новую аватарку — вне транзакции.
 //
 // id передаётся явно из сервиса (не генерируется в БД), чтобы id в БД и
 // s3_key (avatars/{userID}/{id}) совпадали. Без этого БД генерирует свой
 // UUID через DEFAULT, а s3_key остаётся с UUID из сервиса — рассинхрон.
 func (r *AvatarRepository) Create(ctx context.Context, avatar *domain.Avatar) error {
+	return r.create(ctx, r.pool, avatar)
+}
+
+// CreateTx — внутри транзакции (вместе с outbox.Write).
+func (r *AvatarRepository) CreateTx(ctx context.Context, tx pgx.Tx, avatar *domain.Avatar) error {
+	return r.create(ctx, tx, avatar)
+}
+
+func (r *AvatarRepository) create(ctx context.Context, db dbConn, avatar *domain.Avatar) error {
 	const query = `
 		INSERT INTO avatars (
 			id, user_id, file_name, mime_type, size_bytes, s3_key,
@@ -42,7 +58,7 @@ func (r *AvatarRepository) Create(ctx context.Context, avatar *domain.Avatar) er
 		return fmt.Errorf("marshal thumbnail keys: %w", err)
 	}
 
-	err = r.pool.QueryRow(ctx, query,
+	err = db.QueryRow(ctx, query,
 		avatar.ID,
 		avatar.UserID,
 		avatar.FileName,
@@ -175,7 +191,7 @@ func (r *AvatarRepository) ListByUserID(ctx context.Context, userID string) ([]*
 	for rows.Next() {
 		var avatar domain.Avatar
 		var thumbKeys []byte
-		err := rows.Scan(
+		if err := rows.Scan(
 			&avatar.ID,
 			&avatar.UserID,
 			&avatar.FileName,
@@ -191,11 +207,9 @@ func (r *AvatarRepository) ListByUserID(ctx context.Context, userID string) ([]*
 			&avatar.CreatedAt,
 			&avatar.UpdatedAt,
 			&avatar.DeletedAt,
-		)
-		if err != nil {
+		); err != nil {
 			return nil, fmt.Errorf("scan avatar: %w", err)
 		}
-
 		if err := unmarshalThumbnailKeys(thumbKeys, &avatar); err != nil {
 			return nil, fmt.Errorf("unmarshal thumbnail keys: %w", err)
 		}
@@ -311,15 +325,26 @@ func (r *AvatarRepository) Update(ctx context.Context, avatar *domain.Avatar) er
 	return nil
 }
 
-// SoftDelete мягко удаляет аватарку.
+// SoftDelete мягко удаляет аватарку
+// — вне транзакции.
 func (r *AvatarRepository) SoftDelete(ctx context.Context, id string) error {
+	return r.softDelete(ctx, r.pool, id)
+}
+
+// SoftDeleteTx мягко удаляет аватарку
+// — внутри транзакции (вместе с outbox.Write).
+func (r *AvatarRepository) SoftDeleteTx(ctx context.Context, tx pgx.Tx, id string) error {
+	return r.softDelete(ctx, tx, id)
+}
+
+func (r *AvatarRepository) softDelete(ctx context.Context, db dbConn, id string) error {
 	const query = `
 		UPDATE avatars
 		SET deleted_at = $2
 		WHERE id = $1 AND deleted_at IS NULL
 	`
 
-	result, err := r.pool.Exec(ctx, query, id, time.Now())
+	result, err := db.Exec(ctx, query, id, time.Now())
 	if err != nil {
 		return fmt.Errorf("soft delete avatar: %w", err)
 	}

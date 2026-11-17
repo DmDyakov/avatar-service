@@ -1,16 +1,15 @@
-// Package app собирает зависимости и запускает сервер (App)
-// и воркер (WorkerApp).
+// Package app собирает зависимости и запускает сервер.
 package app
 
 import (
 	"context"
 	"fmt"
 
-	"avatar-service/internal/broker/rabbitmq"
 	"avatar-service/internal/config"
 	"avatar-service/internal/storage/minio"
 
 	"avatar-service/internal/repository/postgres"
+	"avatar-service/internal/repository/postgres/outbox"
 	httpserver "avatar-service/internal/transport/http"
 
 	healthservice "avatar-service/internal/services/health"
@@ -32,10 +31,8 @@ type App struct {
 	pgPool     *pgxpool.Pool
 	httpServer *httpserver.Server
 	storage    *minio.Storage
-	publisher  *rabbitmq.Publisher
 }
 
-// New создаёт новый App.
 func New(cfg *config.Config, logger *zap.Logger) (*App, error) {
 	pgPool, err := postgres.NewPool(cfg.Postgres, logger)
 	if err != nil {
@@ -47,20 +44,17 @@ func New(cfg *config.Config, logger *zap.Logger) (*App, error) {
 		return nil, fmt.Errorf("storage: %w", err)
 	}
 
-	pub, err := rabbitmq.NewPublisher(cfg.RabbitMQ, logger)
-	if err != nil {
-		return nil, fmt.Errorf("rabbitmq publisher: %w", err)
-	}
-
 	healthService := healthservice.New()
 	healthService.Register("postgres", pgPool)
 	healthService.Register("storage", storage)
-	healthService.Register("rabbitmq", pub) // Publisher реализует Ping
 
 	healthHandler := healthhandler.NewHealthHandler(healthService, logger)
 
+	txMgr := postgres.NewTxManager(pgPool)
+	outboxRepo := outbox.NewRepository(pgPool)
+
 	avatarRepo := avatarrepo.NewAvatarRepository(pgPool)
-	avatarService := avatarservice.New(avatarRepo, storage, pub, logger)
+	avatarService := avatarservice.New(txMgr, avatarRepo, storage, outboxRepo, logger)
 	avatarHandler := avatarhandler.NewAvatarHandler(avatarService, logger)
 
 	httpServer := httpserver.New(
@@ -78,24 +72,16 @@ func New(cfg *config.Config, logger *zap.Logger) (*App, error) {
 		pgPool:     pgPool,
 		httpServer: httpServer,
 		storage:    storage,
-		publisher:  pub,
 	}, nil
 }
 
 // Run запускает сервер.
 func (a *App) Run(ctx context.Context) error {
 	defer a.pgPool.Close()
-	defer func() {
-		if err := a.publisher.Close(); err != nil {
-			a.logger.Error("publisher close failed", zap.Error(err))
-		}
-	}()
 
 	g, gctx := errgroup.WithContext(ctx)
-
 	g.Go(func() error {
 		return a.httpServer.Run(gctx)
 	})
-
 	return g.Wait()
 }

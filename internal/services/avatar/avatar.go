@@ -1,4 +1,8 @@
 // Package avatar contains business logic for working with avatars.
+//
+// Сервис пишет события в transactional outbox в той же транзакции, что
+// и бизнес-изменения (Create/SoftDelete). Публикацией в RabbitMQ
+// занимается отдельный процесс cmd/relay.
 package avatar
 
 import (
@@ -8,11 +12,11 @@ import (
 	"image"
 	"io"
 	"mime/multipart"
-	"time"
 
 	"avatar-service/internal/domain"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"go.uber.org/zap"
 
 	_ "image/jpeg"
@@ -24,10 +28,12 @@ import (
 //go:generate mockgen -destination=mocks/mock_avatar_repository.go -package=mocks avatar-service/internal/services/avatar AvatarRepository
 type AvatarRepository interface {
 	Create(ctx context.Context, avatar *domain.Avatar) error
+	CreateTx(ctx context.Context, tx pgx.Tx, avatar *domain.Avatar) error
 	GetByID(ctx context.Context, id string) (*domain.Avatar, error)
 	GetUserAvatar(ctx context.Context, userID string) (*domain.Avatar, error)
 	ListByUserID(ctx context.Context, userID string) ([]*domain.Avatar, error)
 	SoftDelete(ctx context.Context, id string) error
+	SoftDeleteTx(ctx context.Context, tx pgx.Tx, id string) error
 }
 
 //go:generate mockgen -destination=mocks/mock_storage.go -package=mocks avatar-service/internal/services/avatar Storage
@@ -37,35 +43,45 @@ type Storage interface {
 	Delete(ctx context.Context, key string) error
 }
 
-//go:generate mockgen -destination=mocks/mock_event_publisher.go -package=mocks avatar-service/internal/services/avatar EventPublisher
-type EventPublisher interface {
-	PublishUploadEvent(ctx context.Context, event domain.AvatarUploadEvent) error
-	PublishDeleteEvent(ctx context.Context, event domain.AvatarDeleteEvent) error
+//go:generate mockgen -destination=mocks/mock_tx_manager.go -package=mocks avatar-service/internal/services/avatar TxManager
+type TxManager interface {
+	WithTx(ctx context.Context, fn func(ctx context.Context, tx pgx.Tx) error) error
+}
+
+//go:generate mockgen -destination=mocks/mock_outbox_writer.go -package=mocks avatar-service/internal/services/avatar OutboxWriter
+type OutboxWriter interface {
+	Write(ctx context.Context, tx pgx.Tx, eventType string, payload any) error
 }
 
 // Service реализует бизнес-логику работы с аватарками.
 type Service struct {
+	txManager  TxManager
 	avatarRepo AvatarRepository
 	storage    Storage
-	publisher  EventPublisher
+	outbox     OutboxWriter
 	logger     *zap.Logger
 }
 
 func New(
+	txManager TxManager,
 	avatarRepo AvatarRepository,
 	storage Storage,
-	publisher EventPublisher,
+	outbox OutboxWriter,
 	logger *zap.Logger,
 ) *Service {
 	return &Service{
+		txManager:  txManager,
 		avatarRepo: avatarRepo,
 		storage:    storage,
-		publisher:  publisher,
+		outbox:     outbox,
 		logger:     logger,
 	}
 }
 
 // Upload загружает новую аватарку.
+//
+// Порядок: S3 → (Create + outbox в одной транзакции).
+// Если транзакция падает — откатываем S3, чтобы не оставить сироту.
 func (s *Service) Upload(
 	ctx context.Context,
 	userID string,
@@ -103,57 +119,45 @@ func (s *Service) Upload(
 		Attempts:         0,
 	}
 
-	if err := s.avatarRepo.Create(ctx, avatar); err != nil {
-		if delErr := s.storage.Delete(ctx, s3Key); delErr != nil {
-			return nil, errors.Join(
-				fmt.Errorf("create avatar: %w", err),
-				fmt.Errorf("rollback s3: %w", delErr),
-			)
-		}
-		return nil, fmt.Errorf("create avatar: %w", err)
-	}
-
 	event := domain.AvatarUploadEvent{
 		AvatarID: avatar.ID,
 		UserID:   userID,
 		S3Key:    s3Key,
 	}
-	if err := s.publishWithRetry(ctx, func() error {
-		return s.publisher.PublishUploadEvent(ctx, event)
-	}); err != nil {
-		s.logger.Error("failed to publish upload event",
-			zap.String("avatar_id", avatar.ID),
-			zap.Error(err),
-		)
+
+	err = s.txManager.WithTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
+		if err := s.avatarRepo.CreateTx(ctx, tx, avatar); err != nil {
+			return fmt.Errorf("create avatar: %w", err)
+		}
+		if err := s.outbox.Write(ctx, tx, "avatar.upload", event); err != nil {
+			return fmt.Errorf("write outbox: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
+		if delErr := s.storage.Delete(ctx, s3Key); delErr != nil {
+			return nil, errors.Join(err, fmt.Errorf("rollback s3: %w", delErr))
+		}
+		return nil, err
 	}
 
 	return avatar, nil
 }
 
-// GetByID возвращает метаданные аватарки и поток её файла.
-func (s *Service) GetByID(
-	ctx context.Context,
-	id string,
-) (*domain.Avatar, io.ReadCloser, error) {
+func (s *Service) GetByID(ctx context.Context, id string) (*domain.Avatar, io.ReadCloser, error) {
 	avatar, err := s.avatarRepo.GetByID(ctx, id)
 	return s.fetchAvatar(ctx, avatar, err)
 }
 
-// GetUserAvatar возвращает текущую аватарку пользователя и поток её файла.
-func (s *Service) GetUserAvatar(
-	ctx context.Context,
-	userID string,
-) (*domain.Avatar, io.ReadCloser, error) {
+func (s *Service) GetUserAvatar(ctx context.Context, userID string) (*domain.Avatar, io.ReadCloser, error) {
 	avatar, err := s.avatarRepo.GetUserAvatar(ctx, userID)
 	return s.fetchAvatar(ctx, avatar, err)
 }
 
-// GetMetadata возвращает метаданные аватарки по ID.
 func (s *Service) GetMetadata(ctx context.Context, id string) (*domain.Avatar, error) {
 	return s.avatarRepo.GetByID(ctx, id)
 }
 
-// fetchAvatar скачивает файл аватарки из storage по S3Key и возвращает поток.
 func (s *Service) fetchAvatar(
 	ctx context.Context,
 	avatar *domain.Avatar,
@@ -162,7 +166,6 @@ func (s *Service) fetchAvatar(
 	if err != nil {
 		return nil, nil, err
 	}
-
 	reader, err := s.storage.Download(ctx, avatar.S3Key)
 	if err != nil {
 		s.logger.Error("failed to download avatar from storage",
@@ -172,15 +175,10 @@ func (s *Service) fetchAvatar(
 		)
 		return nil, nil, fmt.Errorf("%w: %v", domain.ErrStorageUnavailable, err)
 	}
-
 	return avatar, reader, nil
 }
 
-// ListByUserID возвращает все аватарки пользователя.
-func (s *Service) ListByUserID(
-	ctx context.Context,
-	userID string,
-) ([]*domain.Avatar, error) {
+func (s *Service) ListByUserID(ctx context.Context, userID string) ([]*domain.Avatar, error) {
 	avatars, err := s.avatarRepo.ListByUserID(ctx, userID)
 	if err != nil {
 		return nil, err
@@ -191,7 +189,6 @@ func (s *Service) ListByUserID(
 	return avatars, nil
 }
 
-// Delete помечает аватарку удалённой по ID и публикует событие на очистку S3.
 func (s *Service) Delete(ctx context.Context, id string, userID string) error {
 	avatar, err := s.avatarRepo.GetByID(ctx, id)
 	if err != nil {
@@ -200,7 +197,6 @@ func (s *Service) Delete(ctx context.Context, id string, userID string) error {
 	return s.deleteAndPublish(ctx, avatar, userID)
 }
 
-// DeleteUserAvatar удаляет текущую (последнюю) аватарку пользователя.
 func (s *Service) DeleteUserAvatar(ctx context.Context, userID, actorID string) error {
 	avatar, err := s.avatarRepo.GetUserAvatar(ctx, userID)
 	if err != nil {
@@ -209,14 +205,11 @@ func (s *Service) DeleteUserAvatar(ctx context.Context, userID, actorID string) 
 	return s.deleteAndPublish(ctx, avatar, actorID)
 }
 
-// deleteAndPublish проверяет владельца, делает soft delete и публикует событие удаления
+// deleteAndPublish: проверка владельца, soft delete и outbox —
+// в одной транзакции.
 func (s *Service) deleteAndPublish(ctx context.Context, avatar *domain.Avatar, actorID string) error {
 	if avatar.UserID != actorID {
 		return domain.ErrForbidden
-	}
-
-	if err := s.avatarRepo.SoftDelete(ctx, avatar.ID); err != nil {
-		return err
 	}
 
 	s3Keys := make([]string, 0, 1+len(avatar.ThumbnailS3Keys))
@@ -229,58 +222,28 @@ func (s *Service) deleteAndPublish(ctx context.Context, avatar *domain.Avatar, a
 		AvatarID: avatar.ID,
 		S3Keys:   s3Keys,
 	}
-	if err := s.publishWithRetry(ctx, func() error {
-		return s.publisher.PublishDeleteEvent(ctx, event)
-	}); err != nil {
-		s.logger.Error("failed to publish delete event",
-			zap.String("avatar_id", avatar.ID),
-			zap.Error(err),
-		)
-	}
 
-	return nil
+	return s.txManager.WithTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
+		if err := s.avatarRepo.SoftDeleteTx(ctx, tx, avatar.ID); err != nil {
+			return err
+		}
+		if err := s.outbox.Write(ctx, tx, "avatar.delete", event); err != nil {
+			return fmt.Errorf("write outbox: %w", err)
+		}
+		return nil
+	})
 }
 
-// decodeDimensions читает width/height из заголовка изображения.
 func decodeDimensions(file multipart.File) (int, int, error) {
 	if _, err := file.Seek(0, io.SeekStart); err != nil {
 		return 0, 0, fmt.Errorf("seek before decode: %w", err)
 	}
-
 	cfg, _, err := image.DecodeConfig(file)
 	if err != nil {
 		return 0, 0, fmt.Errorf("decode image config: %w", domain.ErrInvalidFormat)
 	}
-
 	if _, err := file.Seek(0, io.SeekStart); err != nil {
 		return 0, 0, fmt.Errorf("seek after decode: %w", err)
 	}
-
 	return cfg.Width, cfg.Height, nil
-}
-
-// publishWithRetry публикует событие с backoff.
-func (s *Service) publishWithRetry(ctx context.Context, fn func() error) error {
-	const attempts = 3
-
-	backoff := 100 * time.Millisecond
-	var lastErr error
-
-	for i := 0; i < attempts; i++ {
-		if err := fn(); err == nil {
-			return nil
-		} else {
-			lastErr = err
-		}
-
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(backoff):
-		}
-
-		backoff *= 3
-	}
-
-	return lastErr
 }

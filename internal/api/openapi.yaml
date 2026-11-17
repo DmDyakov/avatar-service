@@ -7,7 +7,7 @@ info:
     Принимает изображения (JPEG, PNG, WebP до 10 MB), хранит их в S3,
     генерирует миниатюры в фоне через RabbitMQ + worker.
 
-  version: 0.1.0-alpha.1
+  version: 0.1.0-alpha.2
   contact:
     name: Avatar Service
   license:

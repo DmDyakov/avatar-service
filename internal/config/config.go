@@ -27,6 +27,7 @@ type Config struct {
 	S3              S3Config
 	RabbitMQ        RabbitMQConfig
 	Worker          WorkerConfig
+	Outbox          OutboxConfig
 	RateLimit       RateLimitConfig
 	CORS            CORSConfig
 }
@@ -301,4 +302,16 @@ type RateLimitConfig struct {
 
 type CORSConfig struct {
 	AllowedOrigins []string `env:"CORS_ALLOWED_ORIGINS" envDefault:"http://localhost:3000,http://localhost:8080" envSeparator:","`
+}
+
+// --------------------------------------
+// OutboxConfig — настройки outbox relay.
+// --------------------------------------
+
+type OutboxConfig struct {
+	BatchSize        int           `env:"OUTBOX_BATCH_SIZE" envDefault:"50" validate:"gte=1"`
+	MaxAttempts      int           `env:"OUTBOX_MAX_ATTEMPTS" envDefault:"10" validate:"gte=1"`
+	PollInterval     time.Duration `env:"OUTBOX_POLL_INTERVAL" envDefault:"2s" validate:"gt=0"`
+	StaleLockTimeout time.Duration `env:"OUTBOX_STALE_LOCK_TIMEOUT" envDefault:"2m" validate:"gt=0"`
+	StaleSweepPeriod time.Duration `env:"OUTBOX_STALE_SWEEP_PERIOD" envDefault:"30s" validate:"gt=0"`
 }
