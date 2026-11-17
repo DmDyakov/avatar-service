@@ -88,14 +88,13 @@ func (p *Publisher) PublishUploadEvent(ctx context.Context, event domain.AvatarU
 	}
 
 	p.mu.Lock()
-	ch := p.channel
-	p.mu.Unlock()
+	defer p.mu.Unlock()
 
-	if ch == nil {
+	if p.channel == nil {
 		return fmt.Errorf("channel is not initialized")
 	}
 
-	err = ch.PublishWithContext(
+	err = p.channel.PublishWithContext(
 		ctx,
 		ExchangeName,
 		UploadRoutingKey,
@@ -164,14 +163,13 @@ func (p *Publisher) PublishDeleteEvent(ctx context.Context, event domain.AvatarD
 	}
 
 	p.mu.Lock()
-	ch := p.channel
-	p.mu.Unlock()
+	defer p.mu.Unlock()
 
-	if ch == nil {
+	if p.channel == nil {
 		return fmt.Errorf("channel is not initialized")
 	}
 
-	err = ch.PublishWithContext(
+	err = p.channel.PublishWithContext(
 		ctx,
 		ExchangeName,
 		DeleteRoutingKey,

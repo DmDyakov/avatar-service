@@ -4,6 +4,7 @@ import (
 	"avatar-service/internal/config"
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -109,13 +110,22 @@ func (s *Server) Run(ctx context.Context) error {
 
 	s.logger.Info("HTTP server started", zap.String("addr", s.Addr))
 
+	// Канал для ошибок ListenAndServe — если сервер не смог стартовать
+	// (порт занят, TLS-ключ битый), ошибка пробрасывается вызывающему коду,
+	// а не только в логи.
+	serveErrCh := make(chan error, 1)
 	go func() {
 		if err := s.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			s.logger.Error("HTTP server failed", zap.Error(err))
+			serveErrCh <- err
 		}
 	}()
 
-	<-ctx.Done()
+	select {
+	case err := <-serveErrCh:
+		return fmt.Errorf("http server failed to start: %w", err)
+	case <-ctx.Done():
+	}
+
 	s.logger.Info("Shutting down HTTP server...")
 	shCtx, cancel := context.WithTimeout(context.Background(), s.shutdownTimeout)
 	defer cancel()

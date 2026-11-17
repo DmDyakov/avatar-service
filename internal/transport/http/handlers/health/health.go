@@ -1,11 +1,11 @@
-// Package handlers содержит HTTP-обработчики запросов.
-package handlers
+// Package health содержит HTTP-обработчики health-check запросов.
+package health
 
 import (
 	"context"
 	"net/http"
 
-	"avatar-service/internal/services/health"
+	healthsvc "avatar-service/internal/services/health"
 	"avatar-service/internal/transport/http/handlers"
 
 	"go.uber.org/zap"
@@ -13,7 +13,7 @@ import (
 
 //go:generate mockgen -destination=mocks/mock_health_service.go -package=mocks avatar-service/internal/transport/http/handlers/health HealthService
 type HealthService interface {
-	Check(ctx context.Context) (*health.Status, int)
+	Check(ctx context.Context) (*healthsvc.Status, int)
 }
 
 type HealthHandler struct {

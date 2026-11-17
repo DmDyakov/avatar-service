@@ -266,10 +266,13 @@ func (h *AvatarHandler) streamAvatar(w http.ResponseWriter, r *http.Request, ava
 	}
 }
 
-// buildETag - ETag от ID и размера файла.
+// buildETag формирует сильный ETag от ID, размера и времени обновления.
+// Меняется при любой смене версии аватарки (включая перезапись с тем же размером).
 func buildETag(avatar *domain.Avatar) string {
 	h := md5.Sum([]byte(
-		avatar.ID + "|" + strconv.FormatInt(avatar.SizeBytes, 10),
+		avatar.ID + "|" +
+			strconv.FormatInt(avatar.SizeBytes, 10) + "|" +
+			strconv.FormatInt(avatar.UpdatedAt.UnixNano(), 10),
 	))
 	return fmt.Sprintf(`"%x"`, h)
 }

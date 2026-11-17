@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -119,8 +120,23 @@ func (rl *RateLimiter) cleanup() {
 	}
 }
 
-// extractIP вырезает IP из RemoteAddr (`ip:port` → `ip`).
+// extractIP извлекает IP клиента из запроса.
+//
+// Приоритет:
+//  1. X-Real-IP (nginx ingress, k8s nginx-ingress)
+//  2. Первый IP из X-Forwarded-For (за reverse proxy)
+//  3. RemoteAddr напрямую (без proxy)
 func extractIP(r *http.Request) string {
+	if ip := r.Header.Get("X-Real-IP"); ip != "" {
+		return ip
+	}
+	if fwd := r.Header.Get("X-Forwarded-For"); fwd != "" {
+		// X-Forwarded-For: client, proxy1, proxy2 — берём первый.
+		if idx := strings.IndexByte(fwd, ','); idx > 0 {
+			return strings.TrimSpace(fwd[:idx])
+		}
+		return fwd
+	}
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
 		return r.RemoteAddr

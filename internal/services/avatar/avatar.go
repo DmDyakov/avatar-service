@@ -9,7 +9,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"image"
 	"io"
 	"mime/multipart"
 
@@ -18,11 +17,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"go.uber.org/zap"
-
-	_ "image/jpeg"
-	_ "image/png"
-
-	_ "golang.org/x/image/webp"
 )
 
 //go:generate mockgen -destination=mocks/mock_avatar_repository.go -package=mocks avatar-service/internal/services/avatar AvatarRepository
@@ -232,18 +226,4 @@ func (s *Service) deleteAndPublish(ctx context.Context, avatar *domain.Avatar, a
 		}
 		return nil
 	})
-}
-
-func decodeDimensions(file multipart.File) (int, int, error) {
-	if _, err := file.Seek(0, io.SeekStart); err != nil {
-		return 0, 0, fmt.Errorf("seek before decode: %w", err)
-	}
-	cfg, _, err := image.DecodeConfig(file)
-	if err != nil {
-		return 0, 0, fmt.Errorf("decode image config: %w", domain.ErrInvalidFormat)
-	}
-	if _, err := file.Seek(0, io.SeekStart); err != nil {
-		return 0, 0, fmt.Errorf("seek after decode: %w", err)
-	}
-	return cfg.Width, cfg.Height, nil
 }
