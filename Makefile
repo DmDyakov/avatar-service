@@ -46,8 +46,7 @@ COVERAGE_PKGS ?= ./internal/config/... \
                  ./internal/services/... \
                  ./internal/transport/http/handlers/... \
                  ./internal/transport/http/middleware/... \
-                 ./internal/relay/... \
-                 ./pkg/lifecycle/...
+                 ./internal/relay/...
 
 # Дополнительные пакеты для полного прогона с testcontainers.
 COVERAGE_PKGS_FULL ?= ./internal/repository/postgres/avatar/... \

@@ -20,16 +20,16 @@ import (
 // --------------------------------------
 
 type Config struct {
-	AppEnv          string        `env:"APP_ENV" envDefault:"dev" validate:"oneof=dev staging prod"`
-	ShutdownTimeout time.Duration `env:"SHUTDOWN_TIMEOUT" envDefault:"10s" validate:"gt=0"`
-	HTTPServer      HTTPServerConfig
-	Postgres        PostgresConfig
-	S3              S3Config
-	RabbitMQ        RabbitMQConfig
-	Worker          WorkerConfig
-	Outbox          OutboxConfig
-	RateLimit       RateLimitConfig
-	CORS            CORSConfig
+	AppEnv     string `env:"APP_ENV" envDefault:"dev" validate:"oneof=dev staging prod"`
+	HTTPServer HTTPServerConfig
+	Postgres   PostgresConfig
+	S3         S3Config
+	RabbitMQ   RabbitMQConfig
+	Worker     WorkerConfig
+	Outbox     OutboxConfig
+	RateLimit  RateLimitConfig
+	CORS       CORSConfig
+	Logger     LoggerConfig
 }
 
 var validate = validator.New()
@@ -90,6 +90,25 @@ func formatValidationError(err error) error {
 		fmt.Fprintf(&b, "\n  %s: %s (got %q)", fe.Field(), fe.Tag(), fe.Value())
 	}
 	return errors.New(b.String())
+}
+
+// --------------------------------------
+// LoggerConfig — настройки логгера и экспорта логов.
+// --------------------------------------
+
+type LoggerConfig struct {
+	ShutdownTimeout time.Duration `env:"LOG_SHUTDOWN_TIMEOUT" envDefault:"5s" validate:"gt=0"`
+	OTel            OTelConfig
+}
+
+// OTelConfig — настройки экспорта телеметрии в OpenTelemetry Collector.
+type OTelConfig struct {
+	Endpoint       string        `env:"OTEL_EXPORTER_OTLP_ENDPOINT"`
+	ConnectTimeout time.Duration `env:"OTEL_CONNECT_TIMEOUT" envDefault:"10s" validate:"gt=0"`
+	// ScopeName — имя scope логгера OTel (атрибут otel.scope.name).
+	// Это не service.name: service.name задаётся переменной OTEL_SERVICE_NAME
+	// и попадает в resource (см. docker-compose.yml: server|worker|relay).
+	ScopeName string `env:"OTEL_LOG_SCOPE_NAME" envDefault:"avatar-service" validate:"required"`
 }
 
 // --------------------------------------

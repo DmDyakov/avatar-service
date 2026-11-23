@@ -52,6 +52,7 @@ func New(
 
 	r := chi.NewRouter()
 	r.Use(chimw.StripSlashes)
+	r.Use(middleware.RequestLogger(logger))
 
 	// Health — без rate limit (K8s probes).
 	r.Get("/live", healthHandler.Live)
